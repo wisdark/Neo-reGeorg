@@ -24,7 +24,7 @@ Neo-reGeorg
 Version
 ----
 
-1.0.0
+1.1.0
 
 
 
@@ -40,7 +40,7 @@ Basic Usage
 --------------
 
 * **Step 1.**
-Set the password to generate tunnel server.(aspx|ashx|jsp|php) and upload it to the web server.
+Set the password to generate tunnel server.(aspx|ashx|jsp|jspx|php) and upload it to the web server.
 ```ruby
 $ python neoreg.py generate -k password
 
@@ -51,7 +51,9 @@ $ python neoreg.py generate -k password
        => neoreg_server/tunnel.ashx
        => neoreg_server/tunnel.aspx
        => neoreg_server/tunnel.tomcat.5.jsp
+       => neoreg_server/tunnel.tomcat.5.jspx
        => neoreg_server/tunnel.jsp
+       => neoreg_server/tunnel.jspx
 
 ```
 
@@ -145,10 +147,15 @@ $ python neoreg.py -h
 
 * Transfer Target field steganography
 
-* Confuse/Anti-Virus/Compress server-side scripts
+* ~~Confuse/Anti-Virus/Compress server-side scripts~~ Should be modular, standalone tool
    
 
 
 ## License
 
 GPL 3.0
+
+## Change log
+
+v1.1.0
+    - Added jspx support
