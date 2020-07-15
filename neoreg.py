@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__  = 'L'
-__version__ = '1.1.0'
+__version__ = '1.3.3'
 
 import sys
 import os
@@ -40,7 +40,7 @@ REFUSED           = b"\x05"
 #UNASSIGNED       = b"\x09"
 
 # Globals
-READBUFSIZE  = 1024
+READBUFSIZE  = 2048
 MAXTHERADS   = 1000
 READINTERVAL = 100
 
@@ -175,8 +175,6 @@ class session(Thread):
         self.conn = requests.Session()
         self.conn.proxies = PROXY
         self.conn.verify = False
-        for key, value in ADD_COOKIE.items():
-            self.conn.cookies.set(key, value)
         self.conn.headers['Accept-Encoding'] = 'deflate'
         self.conn.headers['User-Agent'] = USERAGENT
         self.connect_closed = False
@@ -224,7 +222,7 @@ class session(Thread):
                 return True
             else:
                 sock.sendall(VER + REFUSED + b"\x00" + b"\x01" + serverIp + targetPort)
-                raise RemoteConnectionFailed("[%s:%d] Remote failed" % (target, targetPortNum))
+                raise RemoteConnectionFailed("[%s:%d] [NOT Cookie Response] Remote failed" % (target, targetPortNum))
 
         raise SocksCmdNotImplemented("Socks5 - Unknown CMD")
 
@@ -271,24 +269,40 @@ class session(Thread):
                 message = rV[message]
             log.error(str_format.format(repr(message)))
 
-    def encode(self, data):
+    def encode_target(self, data):
         data = base64.b64encode(data)
         if ispython3:
             data = data.decode()
         return data.translate(EncodeMap)
 
-    def decode(self, data):
+    def encode_body(self, data):
+        data = base64.b64encode(data)
+        if ispython3:
+            data = data.decode()
+        return data.translate(EncodeMap)
+
+    def decode_body(self, data):
         if ispython3:
             data = data.decode()
         return base64.b64decode(data.translate(DecodeMap))
 
     def setupRemoteSession(self, target, port):
         target_data = ("%s|%d" % (target, port)).encode()
-        headers = {K["X-CMD"]: V["CONNECT"], K["X-TARGET"]: self.encode(target_data)}
+        headers = {K["X-CMD"]: V["CONNECT"], K["X-TARGET"]: self.encode_target(target_data)}
         headers.update(HEADERS)
+        if INIT_COOKIE:
+            headers['Cookie'] = INIT_COOKIE
         self.target = target
         self.port = port
         response = self.conn.post(self.connectURL, headers=headers)
+
+        if INIT_COOKIE:
+            res_cookies = response.cookies.keys()
+            for item in INIT_COOKIE.split(';'):
+                key, value = item.strip().split('=')
+                if key not in res_cookies:
+                    self.conn.cookies.set(key, value)
+
         rep_headers = response.headers
         if response.status_code == 200:
             if K['X-STATUS'] in rep_headers:
@@ -301,10 +315,10 @@ class session(Thread):
                 log.info("[%s:%d] HTTP [200]: cookie [%s]" % (self.target, self.port, cookie))
                 return cookie
             else:
-                self.error_log('{}', rep_headers)
+                self.error_log('[CONNECT] ERROR: {}', rep_headers)
         else:
-            self.error_log("[%s:%d] HTTP [%d]: [{}]" % (self.target, self.port, response.status_code), rep_headers)
-            log.error("[%s:%d] RemoteError: %s" % (self.target, self.port, response.text))
+            self.error_log("[CONNECT] [%s:%d] HTTP [%d]: [{}]" % (self.target, self.port, response.status_code), rep_headers)
+            log.error("[CONNECT] [%s:%d] RemoteError: %s" % (self.target, self.port, response.text))
 
     def closeRemoteSession(self):
         if not self.connect_closed:
@@ -319,9 +333,9 @@ class session(Thread):
             response = self.conn.post(self.connectURL, headers=headers)
             if not self.connect_closed and response.status_code == 200:
                 if hasattr(self, 'target'):
-                    log.info("[%s:%d] Connection Terminated" % (self.target, self.port))
+                    log.info("[DISCONNECT] [%s:%d] Connection Terminated" % (self.target, self.port))
                 else:
-                    log.error("Can't find target")
+                    log.error("[DISCONNECT] Can't find target")
             self.conn.close()
             self.connect_closed = True
 
@@ -342,7 +356,7 @@ class session(Thread):
                             if len(data) == 0:
                                 sleep(READINTERVAL)
                                 continue
-                            data = self.decode(data)
+                            data = self.decode_body(data)
                             # data = data[:-3]
                             # Yes I know this is horrible, but its a quick fix to issues with tomcat 5.x
                             # bugs that have been reported, will find a propper fix laters
@@ -350,11 +364,11 @@ class session(Thread):
                                 if rep_headers["server"].find("Apache-Coyote/1.1") > 0:
                                     data = data[:-1]
                         else:
-                            msg = "[%s:%d] HTTP [%d]: Status: [%s]: Message [{}] Shutting down" % (self.target, self.port, response.status_code, rV[status])
+                            msg = "[READ] [%s:%d] HTTP [%d]: Status: [%s]: Message [{}] Shutting down" % (self.target, self.port, response.status_code, rV[status])
                             self.error_log(msg, rep_headers)
                             break
                     else:
-                        log.error("[%s:%d] HTTP [%d]: Shutting down" % (self.target, self.port, response.status_code))
+                        log.error("[READ] [%s:%d] HTTP [%d]: Shutting down" % (self.target, self.port, response.status_code))
                         break
                     transferLog.info("[%s:%d] <<<< [%d]" % (self.target, self.port, len(data)))
                     self.pSocket.send(data)
@@ -375,17 +389,17 @@ class session(Thread):
                     data = self.pSocket.recv(READBUFSIZE)
                     if not data:
                         break
-                    data = self.encode(data)
+                    data = self.encode_body(data)
                     response = self.conn.post(self.connectURL, headers=headers, data=data)
                     rep_headers = response.headers
                     if response.status_code == 200:
                         status = rep_headers[K["X-STATUS"]]
                         if status != V["OK"]:
-                            msg = "[%s:%d] HTTP [%d]: Status: [%s]: Message [{}] Shutting down" % (self.target, self.port, response.status_code, rV[status])
+                            msg = "[FORWARD] [%s:%d] HTTP [%d]: Status: [%s]: Message [{}] Shutting down" % (self.target, self.port, response.status_code, rV[status])
                             self.error_log(msg, rep_headers)
                             break
                     else:
-                        log.error("[%s:%d] HTTP [%d]: Shutting down" % (self.target, self.port, response.status_code))
+                        log.error("[FORWARD] [%s:%d] HTTP [%d]: Shutting down" % (self.target, self.port, response.status_code))
                         break
                     transferLog.info("[%s:%d] >>>> [%d]" % (self.target, self.port, len(data)))
                 except timeout:
@@ -408,23 +422,27 @@ class session(Thread):
                 r.join()
                 w.join()
         except SocksCmdNotImplemented as si:
-            log.error(si)
+            log.error('[SocksCmdNotImplemented] {}'.format(si))
         except SocksProtocolNotImplemented as spi:
-            log.error(spi)
+            log.error('[SocksProtocolNotImplemented] {}'.format(spi))
         except Exception as e:
-            log.error(e)
+            log.error('[RUN] {}'.format(e))
             self.closeRemoteSession()
+            raise
 
 
 def askGeorg(connectURL):
     log.info("Checking if Georg is ready")
     headers = {'User-Agent': USERAGENT}
     headers.update(HEADERS)
+    if INIT_COOKIE:
+        headers['Cookie'] = INIT_COOKIE
     response = requests.get(connectURL, headers=headers, proxies=PROXY, verify=False)
-    if response.status_code == 200:
-        if BASICCHECKSTRING == response.content.strip():
-            log.info("Georg says, 'All seems fine'")
-            return True
+    if response.status_code == 200 and BASICCHECKSTRING == response.content.strip():
+        log.info("Georg says, 'All seems fine'")
+        return True
+    else:
+        log.error("Georg is not ready, please check url. rep: [{}] {}".format(response.status_code, response.reason))
 
 
 def choice_useragent():
@@ -514,16 +532,16 @@ if __name__ == '__main__':
         parser.add_argument("--read-buff", metavar="Bytes", help="Remote read buffer.(default: 513)", type=int, default=513)
         args = parser.parse_args()
     else:
-        parser = argparse.ArgumentParser(description='Socks server for Neoreg HTTP(s) tunneller')
+        parser = argparse.ArgumentParser(description="Socks server for Neoreg HTTP(s) tunneller. DEBUG MODE: -k (debug_all|debug_base64|debug_headers_key|debug_headers_values)")
         parser.add_argument("-u", "--url", metavar="URI", required=True, help="The url containing the tunnel script")
         parser.add_argument("-k", "--key", metavar="KEY", required=True, help="Specify connection key")
         parser.add_argument("-l", "--listen-on", metavar="IP", help="The default listening address.(default: 127.0.0.1)", default="127.0.0.1")
         parser.add_argument("-p", "--listen-port", metavar="PORT", help="The default listening port.(default: 1080)", type=int, default=1080)
         parser.add_argument("-s", "--skip", help="Skip usability testing", action='store_true')
         parser.add_argument("-H", "--header", metavar="LINE", help="Pass custom header LINE to server", action='append', default=[])
-        parser.add_argument("-c", "--cookie", metavar="LINE", help="Custom cookies to server", action='append', default=[])
+        parser.add_argument("-c", "--cookie", metavar="LINE", help="Custom init cookies")
         parser.add_argument("-x", "--proxy", metavar="LINE", help="proto://host[:port]  Use proxy on given port", default=None)
-        parser.add_argument("--read-buff", metavar="Bytes", help="Local read buffer, max data to be sent per POST.(default: 1024)", type=int, default=READBUFSIZE)
+        parser.add_argument("--read-buff", metavar="Bytes", help="Local read buffer, max data to be sent per POST.(default: 2048 max: 2600)", type=int, default=READBUFSIZE)
         parser.add_argument("--read-interval", metavar="MS", help="Read data interval in milliseconds.(default: 100)", type=int, default=READINTERVAL)
         parser.add_argument("--max-threads", metavar="N", help="Proxy max threads.(default: 1000)", type=int, default=MAXTHERADS)
         parser.add_argument("-v", help="Increase verbosity level (use -vv or more for greater effect)", action='count', default=0)
@@ -532,9 +550,12 @@ if __name__ == '__main__':
     rand = Rand(args.key)
 
     BASE64CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-    M_BASE64CHARS = list(BASE64CHARS)
-    rand.base64_chars(M_BASE64CHARS)
-    M_BASE64CHARS = ''.join(M_BASE64CHARS)
+    if args.key in ['debug_all', 'debug_base64']:
+        M_BASE64CHARS = BASE64CHARS
+    else:
+        M_BASE64CHARS = list(BASE64CHARS)
+        rand.base64_chars(M_BASE64CHARS)
+        M_BASE64CHARS = ''.join(M_BASE64CHARS)
 
     if ispython3:
         maketrans = str.maketrans
@@ -548,16 +569,23 @@ if __name__ == '__main__':
 
     K = {}
     for name in ["X-STATUS", "X-ERROR", "X-CMD", "X-TARGET"]:
-        K[name] = rand.header_key()
+        if args.key in ['debug_all', 'debug_headers_key']:
+            K[name] = name
+        else:
+            K[name] = rand.header_key()
 
     V = {}
     rV = {}
     for name in ["FAIL", "Failed creating socket", "Failed connecting to target", "OK", "Failed writing socket",
             "CONNECT", "DISCONNECT", "READ", "FORWARD", "Failed reading from socket", "No more running, close now",
             "POST request read filed"]:
-        value = rand.header_value()
-        V[name] = value
-        rV[value] = name
+        if args.key in ['debug_all', 'debug_headers_value']:
+            V[name] = name
+            rV[name] = name
+        else:
+            value = rand.header_value()
+            V[name] = value
+            rV[value] = name
 
     if 'url' in args:
         # neoreg connect
@@ -582,15 +610,7 @@ if __name__ == '__main__':
                 log.info("Error parameter: -H %s" % header)
                 exit()
 
-        ADD_COOKIE = {}
-        for cookie in args.cookie:
-            if cookie.count('=') == 1:
-                key, value = cookie.split('=', 1)
-                ADD_COOKIE[key.strip()] = value.strip()
-            else:
-                log.info("Error parameter: -c %s" % cookie)
-                exit()
-
+        INIT_COOKIE = args.cookie
         PROXY = { 'http': args.proxy, 'https': args.proxy } if args.proxy else None
 
         print("  Starting socks server [%s:%d], tunnel at [%s]" % (args.listen_on, args.listen_port, args.url))
@@ -599,10 +619,9 @@ if __name__ == '__main__':
             servSock_start = False
             if not args.skip:
                 if not askGeorg(args.url):
-                    log.info("Georg is not ready, please check url")
                     exit()
 
-            READBUFSIZE  = args.read_buff
+            READBUFSIZE  = min(args.read_buff, 2600)
             MAXTHERADS   = args.max_threads
             READINTERVAL = args.read_interval / 1000.0
 

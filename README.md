@@ -25,7 +25,7 @@ Neo-reGeorg
 Version
 ----
 
-1.1.0
+1.3.0
 
 
 
@@ -79,17 +79,17 @@ Advanced Usage
 1. 支持生成的服务端，默认 GET 请求响应指定的页面内容 (如伪装的404页面)
 ```ruby
 $ python neoreg.py generate -k <you_password> --file 404.html
-$ pytohn neoreg.py -k <you_password> -u <server_url> --skip
+$ python neoreg.py -k <you_password> -u <server_url> --skip
 ```
 
 2. 如服务端WEB，需要设置代理才能访问
 ```ruby
-$ pytohn neoreg.py -k <you_password> -u <server_url> --proxy socks5://10.1.1.1:8080
+$ python neoreg.py -k <you_password> -u <server_url> --proxy socks5://10.1.1.1:8080
 ```
 
 3. 如需Authorization认证和定制的Header或Cookie
 ```ruby
-$ pytohn neoreg.py -k <you_password> -u <server_url> -H 'Authorization: cm9vdDppcyB0d2VsdmU=' --cookie "key=value"
+$ python neoreg.py -k <you_password> -u <server_url> -H 'Authorization: cm9vdDppcyB0d2VsdmU=' --cookie "key=value;key2=value2"
 ```
 
 * 更多关于性能和稳定性的参数设置参考 -h 帮助信息
@@ -114,6 +114,7 @@ $ python neoreg.py -h
                      [--max-threads N] [-v]
 
     Socks server for Neoreg HTTP(s) tunneller
+    DEBUG MODE: -k (debug_all|debug_base64|debug_headers_key|debug_headers_values)
 
     optional arguments:
       -h, --help            show this help message and exit
@@ -127,7 +128,7 @@ $ python neoreg.py -h
       -H LINE, --header LINE
                             Pass custom header LINE to server
       -c LINE, --cookie LINE
-                            Custom cookies to server
+                            Custom init cookies
       -x LINE, --proxy LINE
                             proto://host[:port] Use proxy on given port
       --read-buff Bytes     Local read buffer, max data to be sent per
@@ -162,3 +163,9 @@ GPL 3.0
 
 v1.1.0
     - 新增 jspx 的支持
+
+v1.2.0
+    - 新增 -k debug_all (or debug_base64|debug_headers_key|debug_headers_values) 时，关闭随机混淆，方便调试
+
+v1.3.0
+    - 修复 --cookie  JSESSIONID 冲突，负载均衡环境，服务端找不到 session 无法使用问题
