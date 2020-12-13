@@ -12,20 +12,26 @@ Neo-reGeorg
 
 
 
-## Features
+Version
+----
+
+2.3.2 - [Change Log](CHANGELOG.md)
+
+
+Features
+----
 
 * Transfer content through out-of-order base64 encryption
 * GET request response can be customized (such as masquerading 404 pages)
 * HTTP Headers instructions are randomly generated to avoid feature detection
 * HTTP Headers can be customized
+* Custom HTTP response code
+* Multiple URLs random requests
+* Server-node DNS resolution
 * Compatible with python2 / python3
-
-
-Version
-----
-
-1.3.0
-
+* High compatibility of the server environment
+* Refer to [pivotnacci](https://github.com/blackarrowsec/pivotnacci) to implement a single `SESSION` to create multiple TCP connections to deal with some load balancing scenarios
+* Support HTTP forwarding, coping with load balancing environment
 
 
 Dependencies
@@ -45,29 +51,29 @@ Set the password to generate tunnel server.(aspx|ashx|jsp|jspx|php) and upload i
 $ python neoreg.py generate -k password
 
     [+] Create neoreg server files:
-       => neoreg_server/tunnel.nosocket.php
-       => neoreg_server/tunnel.js
-       => neoreg_server/tunnel.php
-       => neoreg_server/tunnel.ashx
-       => neoreg_server/tunnel.aspx
-       => neoreg_server/tunnel.tomcat.5.jsp
-       => neoreg_server/tunnel.tomcat.5.jspx
-       => neoreg_server/tunnel.jsp
-       => neoreg_server/tunnel.jspx
+       => neoreg_servers/tunnel.jspx
+       => neoreg_servers/tunnel_compatibility.jspx
+       => neoreg_servers/tunnel.php
+       => neoreg_servers/tunnel.ashx
+       => neoreg_servers/tunnel.aspx
+       => neoreg_servers/tunnel.jsp
+       => neoreg_servers/tunnel_compatibility.jsp
 
 ```
 
 * **Step 2.**
-Use `neoreg.py` to connect to the web server and create a socks proxy locally.
+Use `neoreg.py` to connect to the web server and create a socks5 proxy locally.
 ```ruby
 $ python3 neoreg.py -k password -u http://xx/tunnel.php
 +------------------------------------------------------------------------+
-  Log Level set to [ERROR]
-  Starting socks server [127.0.0.1:1080], tunnel at [http://k/tunnel.php]
+  Log Level set to [DEBUG]
+  Starting socks server [127.0.0.1:1080]
+  Tunnel at:
+    http://xx/tunnel.php
 +------------------------------------------------------------------------+
 ```
 
-   Note that if your tool, such as `nmap` does not support socks proxy, please use [proxychains](https://github.com/rofl0r/proxychains-ng) 
+   Note that if your tool, such as `nmap` does not support socks5 proxy, please use [proxychains](https://github.com/rofl0r/proxychains-ng) 
 
 
 
@@ -75,7 +81,7 @@ $ python3 neoreg.py -k password -u http://xx/tunnel.php
 Advanced Usage
 --------------
 
-1. Support for generated tunnel server-side, the default GET request responds to the specified page content (eg camouflaged 404 page)
+1. Support the generated server, by default directly requesting and responding to the specified page content (such as a disguised 404 page)
 ```ruby
 $ python neoreg.py generate -k <you_password> --file 404.html
 $ python neoreg.py -k <you_password> -u <server_url> --skip
@@ -91,11 +97,21 @@ $ python neoreg.py -k <you_password> -u <server_url> --proxy socks5://10.1.1.1:8
 $ python neoreg.py -k <you_password> -u <server_url> -H 'Authorization: cm9vdDppcyB0d2VsdmU=' --cookie "key=value;key2=value2"
 ```
 
+4. Need to disperse requests, upload to multiple paths, such as memory-webshell
+```ruby
+$ python neoreg.py -k <you_password> -u <url_1> -u <url_2> -u <url_3> ...
+```
+
+5. Turn on http forwarding to cope with load balancing
+```ruby
+$ python neoreg.py -k <you_password> -u <url> -r <redirect_url>
+```
+
 * For more information on performance and stability parameters, refer to -h help information
 ```ruby
 # Generate server-side scripts
 $ python neoreg.py generate -h
-    usage: neoreg.py [-h] -k KEY [-o DIR] [-f FILE] [--read-buff Bytes]
+    usage: neoreg.py [-h] -k KEY [-o DIR] [-f FILE] [-c CODE] [--read-buff Bytes]
 
     Generate neoreg webshell
 
@@ -104,20 +120,26 @@ $ python neoreg.py generate -h
       -k KEY, --key KEY     Specify connection key.
       -o DIR, --outdir DIR  Output directory.
       -f FILE, --file FILE  Camouflage html page file
-      --read-buff Bytes     Remote read buffer.(default: 513)
+      -c CODE, --httpcode CODE
+                            Specify HTTP response code. When using -r, it is
+                            recommended to <400. (default: 200)
+      --read-buff Bytes     Remote read buffer. (default: 513)
 
 # Connection server
 $ python neoreg.py -h
-    usage: neoreg.py [-h] -u URI -k KEY [-l IP] [-p PORT] [-s] [-H LINE] [-c LINE]
-                     [-x LINE] [--read-buff Bytes] [--read-interval MS]
-                     [--max-threads N] [-v]
+    usage: neoreg.py [-h] -u URI [-r URL] -k KEY [-l IP] [-p PORT] [-s] [-H LINE]
+                     [-c LINE] [-x LINE] [--local-dns] [--read-buff Bytes]
+                     [--read-interval MS] [--max-threads N] [-v]
 
-    Socks server for Neoreg HTTP(s) tunneller
-    DEBUG MODE: -k (debug_all|debug_base64|debug_headers_key|debug_headers_values)
+    Socks server for Neoreg HTTP(s) tunneller. DEBUG MODE: -k
+    (debug_all|debug_base64|debug_headers_key|debug_headers_values)
 
     optional arguments:
       -h, --help            show this help message and exit
       -u URI, --url URI     The url containing the tunnel script
+      -r URL, --redirect-url URL
+                            Intranet forwarding the designated server (only
+                            jsp(x))
       -k KEY, --key KEY     Specify connection key
       -l IP, --listen-on IP
                             The default listening address.(default: 127.0.0.1)
@@ -130,8 +152,10 @@ $ python neoreg.py -h
                             Custom init cookies
       -x LINE, --proxy LINE
                             proto://host[:port] Use proxy on given port
+      --local-dns           Local read buffer, max data to be sent per
+                            POST.(default: 2048 max: 2600)
       --read-buff Bytes     Local read buffer, max data to be sent per
-                            POST.(default: 1024)
+                            POST.(default: 2048 max: 2600)
       --read-interval MS    Read data interval in milliseconds.(default: 100)
       --max-threads N       Proxy max threads.(default: 1000)
       -v                    Increase verbosity level (use -vv or more for greater
@@ -140,29 +164,16 @@ $ python neoreg.py -h
 
 
 
-## TODO
-
-* Solving tennel.js cannot continue TCP connection problems
+TODO
+----
 
 * HTTP body steganography
 
 * Transfer Target field steganography
 
-* ~~Confuse/Anti-Virus/Compress server-side scripts~~ Should be modular, standalone tool
-   
 
 
-## License
+License
+----
 
 GPL 3.0
-
-## Change log
-
-v1.1.0
-    - Added jspx support
-
-v1.2.0
-    - Added -k debug_all (or debug_base64|debug_headers_key|debug_headers_values), Easy to debug
-
-v1.3.0
-    - Fixed --cookie JSESSIONID conflict, unavailable in load balancing environment
