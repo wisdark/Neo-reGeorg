@@ -1,5 +1,4 @@
-Neo-reGeorg
-=========
+# Neo-reGeorg
 
 [简体中文](README.md)　｜　[English](README-en.md)
 
@@ -10,16 +9,14 @@ Neo-reGeorg
 * Improve the confidentiality of transmission content
 * Solve the existing problems of reGeorg and fix some small bugs
 
+> This tool is limited to safety research and teaching, and the user assumes all legal and related responsibilities caused by the use of this tool! The author does not bear any legal and related responsibilities!
+
+## Version
+
+3.0.0 - [Change Log](CHANGELOG-en.md)
 
 
-Version
-----
-
-2.3.2 - [Change Log](CHANGELOG.md)
-
-
-Features
-----
+## Features
 
 * Transfer content through out-of-order base64 encryption
 * GET request response can be customized (such as masquerading 404 pages)
@@ -30,20 +27,19 @@ Features
 * Server-node DNS resolution
 * Compatible with python2 / python3
 * High compatibility of the server environment
-* Refer to [pivotnacci](https://github.com/blackarrowsec/pivotnacci) to implement a single `SESSION` to create multiple TCP connections to deal with some load balancing scenarios
+* (only php) Refer to [pivotnacci](https://github.com/blackarrowsec/pivotnacci) to implement a single `SESSION` to create multiple TCP connections to deal with some load balancing scenarios
+* aspx/ashx/jsp/jspx no longer relies on Session, and can run normally in harsh environments such as cookie-free
 * Support HTTP forwarding, coping with load balancing environment
 
 
-Dependencies
------------
+## Dependencies
 
 * [**requests**] - https://github.com/kennethreitz/requests
 
 
 
 
-Basic Usage
---------------
+## Basic Usage
 
 * **Step 1.**
 Set the password to generate tunnel server.(aspx|ashx|jsp|jspx|php) and upload it to the web server.
@@ -78,8 +74,7 @@ $ python3 neoreg.py -k password -u http://xx/tunnel.php
 
 
 
-Advanced Usage
---------------
+## Advanced Usage
 
 1. Support the generated server, by default directly requesting and responding to the specified page content (such as a disguised 404 page)
 ```ruby
@@ -107,6 +102,11 @@ $ python neoreg.py -k <you_password> -u <url_1> -u <url_2> -u <url_3> ...
 $ python neoreg.py -k <you_password> -u <url> -r <redirect_url>
 ```
 
+6. Use the port forwarding function, do not start the socks5 service ( 127.0.0.1:1080 -> ip:port )
+```ruby
+$ python neoreg.py -k <you_password> -u <url> -t <ip:port>
+```
+
 * For more information on performance and stability parameters, refer to -h help information
 ```ruby
 # Generate server-side scripts
@@ -127,9 +127,10 @@ $ python neoreg.py generate -h
 
 # Connection server
 $ python neoreg.py -h
-    usage: neoreg.py [-h] -u URI [-r URL] -k KEY [-l IP] [-p PORT] [-s] [-H LINE]
-                     [-c LINE] [-x LINE] [--local-dns] [--read-buff Bytes]
-                     [--read-interval MS] [--max-threads N] [-v]
+    usage: neoreg.py [-h] -u URI [-r URL] [-t IP:PORT] -k KEY [-l IP] [-p PORT]
+                     [-s] [-H LINE] [-c LINE] [-x LINE] [--local-dns]
+                     [--read-buff Bytes] [--read-interval MS]
+                     [--write-interval MS] [--max-threads N] [-v]
 
     Socks server for Neoreg HTTP(s) tunneller. DEBUG MODE: -k
     (debug_all|debug_base64|debug_headers_key|debug_headers_values)
@@ -140,6 +141,9 @@ $ python neoreg.py -h
       -r URL, --redirect-url URL
                             Intranet forwarding the designated server (only
                             jsp(x))
+      -t IP:PORT, --target IP:PORT
+                            Network forwarding Target, After setting this
+                            parameter, port forwarding will be enabled
       -k KEY, --key KEY     Specify connection key
       -l IP, --listen-on IP
                             The default listening address.(default: 127.0.0.1)
@@ -151,21 +155,25 @@ $ python neoreg.py -h
       -c LINE, --cookie LINE
                             Custom init cookies
       -x LINE, --proxy LINE
-                            proto://host[:port] Use proxy on given port
-      --local-dns           Local read buffer, max data to be sent per
-                            POST.(default: 2048 max: 2600)
+                            Proto://host[:port] Use proxy on given port
+      --local-dns           Use local resolution DNS
       --read-buff Bytes     Local read buffer, max data to be sent per
                             POST.(default: 2048 max: 2600)
-      --read-interval MS    Read data interval in milliseconds.(default: 100)
+      --read-interval MS    Read data interval in milliseconds.(default: 300)
+      --write-interval MS   Write data interval in milliseconds.(default: 200)
       --max-threads N       Proxy max threads.(default: 1000)
       -v                    Increase verbosity level (use -vv or more for greater
                             effect)
 ```
 
 
+## Remind
 
-TODO
-----
+* When running `neoreg.py` with high concurrency on Mac OSX, a large number of network requests will be lost. You can use `ulimit -n 2560` to modify the "maximum number of open files" of the current shell.
+
+
+
+## TODO
 
 * HTTP body steganography
 
@@ -173,7 +181,11 @@ TODO
 
 
 
-License
-----
+## License
 
 GPL 3.0
+
+
+## Stargazers over time
+
+[![Stargazers over time](https://starchart.cc/L-codes/Neo-reGeorg.svg)](https://starchart.cc/L-codes/Neo-reGeorg)
