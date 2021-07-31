@@ -1,5 +1,29 @@
 # Change Log
 
+### v3.4.0:
+    Clinet: Add the `--php-connect-timeout` parameter to solve the problem that the port connection status cannot be judged due to the slow response of PHP on Windows
+
+### v3.3.0:
+    Client: Enhance the printing information during data transmission, which is convenient for debugging
+    Client: Fix the special case of `FORWARD` request, the data type is wrong, resulting in the inability to obtain the body
+    Server: jsp(x) fixed forwarding compatibility issues when using HTTP/1.0 in Nginx
+
+### v3.2.1:
+    Server: jsp(x) fixes the error that cannot be compiled normally in the Jboss environment
+
+### v3.2.0:
+    Fix bugs that occurred when solving high-bandwidth, improve stability, and increase the transmission speed of high-bandwidth by more than 10 times
+    Client: Add the `--max-read-size` parameter to control the maximum length of the response packet of the `READ` request
+    Client: Fix the problem that python `socket.send()` cannot be written completely
+    Client: Fix the accuracy of debugging information requested by `FORWARD` in INFO print mode
+    Client: Release the `--read-buff` parameter limit and set the default value to 7kb
+    Server: aspx/ashx/jsp(x) Solve the problem that the socket IO cannot be updated immediately when the download traffic is too large (Special thanks to Godzilla author @BeichenDream for the solution)
+    Server: jsp(x) Fix the problem that base64 content is truncated when the download traffic is too large
+    Server: jsp(x) fixes the limitation of releasing POST body, greatly improving the request speed of `FORWARD`
+
+### v3.1.0:
+    Server: jsp(x) fixes performance issues while maintaining compatibility, greatly improves the speed of `READ` requests (special thanks to @XinRoom for the PR solution)
+
 ### v3.0.0
     Client: Client: Only verify php cookies
     Server: aspx/ashx/jsp/jspx Use global variables to replace `Session`, and no longer rely on Cookie (Special thanks to @c0ny1 for the solution)

