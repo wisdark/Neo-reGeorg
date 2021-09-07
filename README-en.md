@@ -13,7 +13,7 @@
 
 ## Version
 
-3.4.0 - [Change Log](CHANGELOG-en.md)
+3.5.0 - [Change Log](CHANGELOG-en.md)
 
 
 ## Features
@@ -181,6 +181,8 @@ $ python neoreg.py -h
 
 * Transfer Target field steganography
 
+* Problem of ignoring the verification of https in the intranet forwarding
+
 
 
 ## License
@@ -191,3 +193,5 @@ GPL 3.0
 ## Stargazers over time
 
 [![Stargazers over time](https://starchart.cc/L-codes/Neo-reGeorg.svg)](https://starchart.cc/L-codes/Neo-reGeorg)
+
+<img align='right' src="https://profile-counter.glitch.me/neo-regeorg/count.svg" width="200">

@@ -14,7 +14,7 @@
 
 ## Version
 
-3.4.0 - [版本修改日志](CHANGELOG.md)
+3.5.0 - [版本修改日志](CHANGELOG.md)
 
 
 
@@ -183,6 +183,8 @@ $ python neoreg.py -h
 
  * 传输 Target 隐写
 
+ * 内网转发 https 的验证忽略
+
 
 ## License
 
@@ -192,3 +194,5 @@ GPL 3.0
 ## Stargazers over time
 
 [![Stargazers over time](https://starchart.cc/L-codes/Neo-reGeorg.svg)](https://starchart.cc/L-codes/Neo-reGeorg)
+
+<img align='right' src="https://profile-counter.glitch.me/neo-regeorg/count.svg" width="200">
