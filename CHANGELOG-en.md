@@ -1,5 +1,11 @@
 # Change Log
 
+### v3.7.0:
+    Client: Added `--cut-left/--cut-right` parameters to adjust the offset of the body according to the special environment (such as Confluence)
+
+### v3.6.0:
+    Server: aspx/ashx added support for intranet forwarding function (reference -r)
+
 ### v3.5.0:
     Server: jsp(x) uses classloader instead to solve the problem that jdk syntax is not backward compatible and cannot run normally (compatible with jdk >= 1.5) (special thanks to @c0ny1 for the PR solution)
     Server: jsp(x) repair websphere environment, java.lang.NegativeArraySizeException error of FORWARD
