@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__  = 'L'
-__version__ = '3.8.0(preview)'
+__version__ = '3.8.1'
 
 import sys
 import os
@@ -377,10 +377,7 @@ class session(Thread):
                         status = rep_headers[K["X-STATUS"]]
                         if status == V["OK"]:
                             data = response.content
-                            if args.cut_left > 0:
-                                data = data[args.cut_left:]
-                            if args.cut_right > 0:
-                                data = data[:-args.cut_right]
+                            data = extract_body(data)
                             if len(data) == 0:
                                 sleep(READINTERVAL)
                                 continue
@@ -521,8 +518,8 @@ def askGeorg(conn, connectURLs, redirectURLs):
                             need_exit = True
                 except ValueError:
                     log.warning('Expires wrong format: {}'.format(expires))
-    except:
-        log.error("Georg is not ready, please check URL.")
+    except Exception as ex:
+        log.error("Georg is not ready, please check URL. Error: " + str(ex))
         exit()
 
     if need_exit:
@@ -532,10 +529,7 @@ def askGeorg(conn, connectURLs, redirectURLs):
         log.warning('Using redirection will affect performance when the response code >= 400')
 
     data = response.content
-    if args.cut_left > 0:
-        data = data[args.cut_left:]
-    if args.cut_right > 0:
-        data = data[:-args.cut_right]
+    data = extract_body(data)
 
     if BASICCHECKSTRING == data.strip():
         log.info("Georg says, 'All seems fine'")
@@ -544,7 +538,12 @@ def askGeorg(conn, connectURLs, redirectURLs):
         left_offset = data.index(BASICCHECKSTRING)
         right_offset = len(data) - ( left_offset + len(BASICCHECKSTRING) )
         log.error("Georg is ready, but the body needs to be offset")
-        log.error("You can set the `--cut-left {} --cut-right {}` parameter to body offset".format(left_offset, right_offset))
+        args_tips = ''
+        if left_offset:
+            args_tips += '--cut-left {}'.format(left_offset)
+        if right_offset:
+            args_tips += '--cut-right {}'.format(right_offset)
+        log.error("You can set the `{}` parameter to body offset".format(args_tips))
         exit()
     else:
         if args.skip:
@@ -562,6 +561,18 @@ def askGeorg(conn, connectURLs, redirectURLs):
                 log.error("Georg is not ready, please check URL and KEY. rep: [{}] {}".format(response.status_code, response.reason))
                 log.error("You can set the `--skip` parameter to ignore errors")
             exit()
+
+
+def extract_body(data):
+    if args.cut_left > 0:
+        data = data[args.cut_left:]
+    if args.cut_right > 0:
+        data = data[:-args.cut_right]
+    if args.extract:
+        match = EXTRACT_EXPR.search(data.decode())
+        if match:
+            data = match[1].encode()
+    return data
 
 
 def choice_useragent():
@@ -619,7 +630,7 @@ banner = r"""
            $$                 '$$$
 
 
-    [ Github ] https://github.com/L-codes/neoreg
+    [ Github ] https://github.com/L-codes/Neo-reGeorg
 """.format(__version__)
 
 use_examples = r"""
@@ -672,8 +683,17 @@ if __name__ == '__main__':
         parser.add_argument("--max-threads", metavar="N", help="Proxy max threads.(default: 1000)", type=int, default=MAXTHERADS)
         parser.add_argument("--cut-left", metavar="N", help="Truncate the left side of the response body", type=int, default=0)
         parser.add_argument("--cut-right", metavar="N", help="Truncate the right side of the response body", type=int, default=0)
+        parser.add_argument("--extract", metavar="EXPR", help="Manually extract BODY content. (eg: <html><p>REGBODY</p></html> )")
         parser.add_argument("-v", help="Increase verbosity level (use -vv or more for greater effect)", action='count', default=0)
         args = parser.parse_args()
+
+        if args.extract:
+            if 'REGBODY' not in args.extract:
+                print('[!] Error extracting expression, REGBODY not found')
+                exit()
+            else:
+                expr = re.sub('REGBODY', r'\\s*([A-Za-z0-9+/]*(?:=|==)?|<!-- [a-zA-Z0-9]+ -->)\\s*', re.escape(args.extract))
+                EXTRACT_EXPR = re.compile(expr, re.S)
 
     rand = Rand(args.key)
 

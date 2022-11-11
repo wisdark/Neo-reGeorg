@@ -1,5 +1,14 @@
 # Change Log
 
+### v3.8.1:
+    Server: java side, fix the problem that neoreg has no echo under listener
+    Server: java side, intranet forwarding supports https (ignoring certificate security @BeichenDream PR)
+
+### v3.8.0:
+    Server: Optimize php, remove the `?>` end, avoid adding `\n` at the end when other editors save
+    Client: Add debug information for http requests to facilitate debugging and analysis
+    Client: Add the `--extract expr` parameter to deal with the environment where the server dynamically appends content before and after, manually set the extraction BODY content, if the server returns <p>base64data </p>, you can use `--extract '<p>REGBODY< /p>'` to deal with
+
 ### v3.7.0:
     Client: Added `--cut-left/--cut-right` parameters to adjust the offset of the body according to the special environment (such as Confluence)
 
