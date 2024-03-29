@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__  = 'L'
-__version__ = '5.0.1'
+__version__ = '5.2.0'
 
 import sys
 import os
@@ -49,6 +49,7 @@ MAXTHERADS    = 400
 MAXRETRY      = 10
 READINTERVAL  = 300
 WRITEINTERVAL = 200
+PHPSERVER     = False
 PHPTIMEOUT    = 0.5
 
 # Logging
@@ -172,7 +173,12 @@ def encode_body(info):
     data = base64.b64encode(data)
     if ispython3:
         data = data.decode()
-    return data.translate(EncodeMap)
+
+    data = data.translate(EncodeMap)
+    if request_template:
+        data = request_template[0] + data + request_template[1]
+
+    return data
 
 
 def decode_body(data):
@@ -454,7 +460,7 @@ class session(Thread):
 
         info = {'CMD': 'CONNECT', 'MARK': self.mark, 'IP': self.target, 'PORT': str(self.port)}
 
-        if '.php' in self.connectURLs[0]:
+        if '.php' in self.connectURLs[0] or PHPSERVER:
             try:
                 rinfo = self.neoreg_request(info, timeout=PHPTIMEOUT)
             except:
@@ -607,7 +613,7 @@ def askNeoGeorg(conn, connectURLs, redirectURLs, force_redirect):
         else:
             response = conn.get(connectURLs[0], headers=headers, timeout=10)
         log.debug("[HTTP] Ask NeoGeorg Response => HttpCode: {}".format(response.status_code))
-        if '.php' in connectURLs[0]:
+        if '.php' in connectURLs[0] or PHPSERVER:
             if 'Expires' in response.headers:
                 expires = response.headers['Expires']
                 try:
@@ -752,13 +758,14 @@ if __name__ == '__main__':
         parser.add_argument("-o", "--outdir", metavar="DIR", help="Output directory.", default='neoreg_servers')
         parser.add_argument("-f", "--file", metavar="FILE", help="Camouflage html page file")
         parser.add_argument("-c", "--httpcode", metavar="CODE", help="Specify HTTP response code. When using -r, it is recommended to <400 (default: 200)", type=int, default=200)
+        parser.add_argument("-T", "--request-template", metavar="STR/FILE", help="HTTP request template (eg: 'img=data:image/png;base64,NEOREGBODY&save=ok')", type=str)
         parser.add_argument("--read-buff", metavar="Bytes", help="Remote read buffer (default: 513)", type=int, default=513)
         parser.add_argument("--max-read-size", metavar="KB", help="Remote max read size (default: 512)", type=int, default=512)
         args = parser.parse_args()
     else:
         parser = argparse.ArgumentParser(description="Socks server for Neoreg HTTP(s) tunneller (DEBUG MODE: -k debug)")
         parser.add_argument("-u", "--url", metavar="URI", required=True, help="The url containing the tunnel script", action='append')
-        parser.add_argument("-r", "--redirect-url", metavar="URL", help="Intranet forwarding the designated server (only jsp(x))", action='append')
+        parser.add_argument("-r", "--redirect-url", metavar="URL", help="Intranet forwarding the designated server (only java/.net)", action='append')
         parser.add_argument("-R", "--force-redirect", help="Forced forwarding (only jsp -r)", action='store_true')
         parser.add_argument("-t", "--target", metavar="IP:PORT", help="Network forwarding Target, After setting this parameter, port forwarding will be enabled")
         parser.add_argument("-k", "--key", metavar="KEY", required=True, help="Specify connection key")
@@ -768,6 +775,8 @@ if __name__ == '__main__':
         parser.add_argument("-H", "--header", metavar="LINE", help="Pass custom header LINE to server", action='append', default=[])
         parser.add_argument("-c", "--cookie", metavar="LINE", help="Custom init cookies")
         parser.add_argument("-x", "--proxy", metavar="LINE", help="Proto://host[:port]  Use proxy on given port", default=None)
+        parser.add_argument("-T", "--request-template", metavar="STR/FILE", help="HTTP request template (eg: 'img=data:image/png;base64,NEOREGBODY&save=ok')", type=str)
+        parser.add_argument("--php", help="Use php connection method", action='store_true')
         parser.add_argument("--php-connect-timeout", metavar="S", help="PHP connect timeout (default: {})".format(PHPTIMEOUT), type=float, default=PHPTIMEOUT)
         parser.add_argument("--local-dns", help="Use local resolution DNS", action='store_true')
         parser.add_argument("--read-buff", metavar="KB", help="Local read buffer, max data to be sent per POST (default: {}, max: 50)".format(READBUFSIZE), type=int, default=READBUFSIZE)
@@ -788,6 +797,22 @@ if __name__ == '__main__':
             else:
                 expr = re.sub('NEOREGBODY', r'\\s*([A-Za-z0-9+/]*(?:=|==)?|<!-- [a-zA-Z0-9+/]+ -->)\\s*', re.escape(args.extract))
                 EXTRACT_EXPR = re.compile(expr, re.S)
+
+    global request_template
+    request_template = None
+    if args.request_template:
+        try:
+            data = open(args.request_template).read()
+            request_template = data
+        except:
+            request_template = args.request_template
+
+        if 'NEOREGBODY' in request_template:
+            request_template = request_template.split('NEOREGBODY', 1)
+        else:
+            print('[!] Error request template, `NEOREGBODY` not found')
+            exit()
+
 
     rand = Rand(args.key)
     BLV_L_OFFSET = random.getrandbits(31)
@@ -825,7 +850,8 @@ if __name__ == '__main__':
         print(separation)
         print("  Log Level set to [%s]" % LEVELNAME)
 
-        USERAGENT = choice_useragent()
+        USERAGENT  = choice_useragent()
+        PHPSERVER  = args.php
         PHPTIMEOUT = args.php_connect_timeout
 
         urls = args.url
@@ -956,6 +982,15 @@ if __name__ == '__main__':
             neoreg_hello = neoreg_hello.decode()
         neoreg_hello = neoreg_hello.translate(EncodeMap)
 
+        request_template_start_index = 0
+        request_template_end_index = 0
+        if request_template:
+            use_request_template = 1
+            request_template_start_index = len(request_template[0])
+            request_template_end_index = len(request_template[1])
+        else:
+            use_request_template = 0
+
         for filename in os.listdir(script_dir):
             outfile = os.path.join(outdir, filename)
             filepath = os.path.join(script_dir, filename)
@@ -966,6 +1001,11 @@ if __name__ == '__main__':
                 text = re.sub(r"\bHTTPCODE\b", str(args.httpcode), text)
                 text = re.sub(r"\bREADBUF\b", str(READBUF), text)
                 text = re.sub(r"\bMAXREADSIZE\b", str(MAXREADSIZE), text)
+
+                # request template
+                text = re.sub(r"USE_REQUEST_TEMPLATE", str(use_request_template), text)
+                text = re.sub(r"START_INDEX", str(request_template_start_index), text)
+                text = re.sub(r"END_INDEX", str(request_template_end_index), text)
 
                 # fix subn bug
                 text = re.sub(r"\bBLV_L_OFFSET\b", str(BLV_L_OFFSET), text)

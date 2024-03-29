@@ -1,5 +1,21 @@
 # Change Log
 
+### v5.2.0:
+##### New Features
+    1. Added `--php` parameter. By default, it is judged based on the URL set by --url whether the .php suffix uses the PHP connection method. In special cases, you can manually use --php to specify the PHP connection method.
+
+### v5.1.0:
+##### New Features
+    1. Add `--request-template` parameter to set request template to avoid traffic detection
+##### Fix
+    1. Updated documentation for `-r` parameter
+
+### v5.0.2:
+##### Enhancement
+    1. Support for php < 5.4 (special thanks to @me1ons for issue #82)
+#####  Fix
+    1. Fix the situation where php does not support `php://input` in some environments and cannot be used normally
+
 ### v5.0.1:
 ##### Enhancement
     1. Java improves compatibility through reflection, such as tomcat10 cannot be used (special thanks to @BeichenDream for PR)
