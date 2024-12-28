@@ -50,6 +50,8 @@ MAXRETRY      = 10
 READINTERVAL  = 300
 WRITEINTERVAL = 200
 PHPSERVER     = False
+PHPSKIPCOOKIE = False
+GOSERVER      = False
 PHPTIMEOUT    = 0.5
 
 # Logging
@@ -460,7 +462,7 @@ class session(Thread):
 
         info = {'CMD': 'CONNECT', 'MARK': self.mark, 'IP': self.target, 'PORT': str(self.port)}
 
-        if '.php' in self.connectURLs[0] or PHPSERVER:
+        if ( '.php' in self.connectURLs[0] or PHPSERVER ) and not GOSERVER:
             try:
                 rinfo = self.neoreg_request(info, timeout=PHPTIMEOUT)
             except:
@@ -613,7 +615,7 @@ def askNeoGeorg(conn, connectURLs, redirectURLs, force_redirect):
         else:
             response = conn.get(connectURLs[0], headers=headers, timeout=10)
         log.debug("[HTTP] Ask NeoGeorg Response => HttpCode: {}".format(response.status_code))
-        if '.php' in connectURLs[0] or PHPSERVER:
+        if not PHPSKIPCOOKIE and ( '.php' in connectURLs[0] or PHPSERVER ):
             if 'Expires' in response.headers:
                 expires = response.headers['Expires']
                 try:
@@ -777,13 +779,15 @@ if __name__ == '__main__':
         parser.add_argument("-x", "--proxy", metavar="LINE", help="Proto://host[:port]  Use proxy on given port", default=None)
         parser.add_argument("-T", "--request-template", metavar="STR/FILE", help="HTTP request template (eg: 'img=data:image/png;base64,NEOREGBODY&save=ok')", type=str)
         parser.add_argument("--php", help="Use php connection method", action='store_true')
+        parser.add_argument("--php-skip-cookie", help="Skip cookie availability check in php", action='store_true')
+        parser.add_argument("--go", help="Use go connection method", action='store_true')
         parser.add_argument("--php-connect-timeout", metavar="S", help="PHP connect timeout (default: {})".format(PHPTIMEOUT), type=float, default=PHPTIMEOUT)
         parser.add_argument("--local-dns", help="Use local resolution DNS", action='store_true')
         parser.add_argument("--read-buff", metavar="KB", help="Local read buffer, max data to be sent per POST (default: {}, max: 50)".format(READBUFSIZE), type=int, default=READBUFSIZE)
         parser.add_argument("--read-interval", metavar="MS", help="Read data interval in milliseconds (default: {})".format(READINTERVAL), type=int, default=READINTERVAL)
         parser.add_argument("--write-interval", metavar="MS", help="Write data interval in milliseconds (default: {})".format(WRITEINTERVAL), type=int, default=WRITEINTERVAL)
         parser.add_argument("--max-threads", metavar="N", help="Proxy max threads (default: {})".format(MAXTHERADS), type=int, default=MAXTHERADS)
-        parser.add_argument("--max-retry", metavar="N", help="Proxy max threads (default: {})".format(MAXRETRY), type=int, default=MAXRETRY)
+        parser.add_argument("--max-retry", metavar="N", help="Max retry requests (default: {})".format(MAXRETRY), type=int, default=MAXRETRY)
         parser.add_argument("--cut-left", metavar="N", help="Truncate the left side of the response body", type=int, default=0)
         parser.add_argument("--cut-right", metavar="N", help="Truncate the right side of the response body", type=int, default=0)
         parser.add_argument("--extract", metavar="EXPR", help="Manually extract BODY content (eg: <html><p>NEOREGBODY</p></html> )")
@@ -850,9 +854,11 @@ if __name__ == '__main__':
         print(separation)
         print("  Log Level set to [%s]" % LEVELNAME)
 
-        USERAGENT  = choice_useragent()
-        PHPSERVER  = args.php
-        PHPTIMEOUT = args.php_connect_timeout
+        USERAGENT     = choice_useragent()
+        PHPSERVER     = args.php
+        GOSERVER      = args.go
+        PHPTIMEOUT    = args.php_connect_timeout
+        PHPSKIPCOOKIE = args.php_skip_cookie
 
         urls = args.url
         redirect_urls = args.redirect_url
